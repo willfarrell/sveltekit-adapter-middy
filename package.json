@@ -1,0 +1,66 @@
+{
+  "name": "sveltekit-adapter-middy",
+  "version": "0.0.0-alpha.0",
+  "description": "SvelteKit adapter for AWS Lambda with Middy",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "engineStrict": true,
+  "publishConfig": {
+    "access": "public"
+  },
+  "module": "./index.js",
+  "exports": {
+    ".": {
+      "import": {
+        "default": "./index.js"
+      }
+    }
+  },
+  "files": [
+    "index.js",
+    "handler.js",
+    "sveltekitMiddleware.js",
+    "sveltekitHandler.js"
+  ],
+  "scripts": {
+    "test": "echo test"
+  },
+  "license": "MIT",
+  "keywords": [
+    "SvelteKit",
+    "Middy",
+    "Lambda",
+    "Middleware",
+    "Serverless",
+    "AWS",
+    "AWS Lambda",
+    "Middy",
+    "HTTP",
+    "SSR"
+  ],
+  "author": {
+    "name": "contributors",
+    "url": "https://github.com/willfarrell/sveltekit-adapter-middy/graphs/contributors"
+  },
+  "repository": {
+    "type": "git",
+    "url": "github:willfarrell/sveltekit-adapter-middy",
+    "directory": ""
+  },
+  "bugs": {
+    "url": "https://github.com/willfarrell/sveltekit-adapter-middy/issues"
+  },
+  "homepage": "https://middy.js.org",
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/willfarrell"
+  },
+  "dependencies": {
+    "@datastream/string": "0.0.36",
+    "@middy/core": "5.4.0",
+    "esbuild": "^0.21.0",
+    "set-cookie-parser": "2.6.0"
+  }
+}
