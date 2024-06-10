@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import { splitCookiesString } from 'set-cookie-parser'
 
 const lambdaHandler = async (event, context, { signal }) => {
@@ -6,7 +7,7 @@ const lambdaHandler = async (event, context, { signal }) => {
   const { method, path } = event.requestContext.http
 
   // Copy secrets from ssm into import.meta scope
-  Object.assign(import.meta.env, env)
+  //Object.assign(import.meta.env, env)
 
   // Override origin
   headers.origin = process.env.ORIGIN ?? headers.origin
@@ -19,8 +20,6 @@ const lambdaHandler = async (event, context, { signal }) => {
     : headers['content-encoding'] ?? 'utf-8'
   const body =
     typeof rawBody === 'string' ? Buffer.from(rawBody, encoding) : rawBody
-
-  await init
 
   const rendered = await server.respond(
     new Request(url, {
@@ -43,7 +42,7 @@ const lambdaHandler = async (event, context, { signal }) => {
         'cache-control': 'no-cache'
       },
       multiValueHeaders: {},
-      body: rendered.body
+      body: Readable.from(rendered.body)
     }
 
     for (const [key, value] of rendered.headers.entries()) {

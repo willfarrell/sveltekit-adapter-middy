@@ -1,6 +1,6 @@
 {
   "name": "sveltekit-adapter-middy",
-  "version": "0.0.0-alpha.0",
+  "version": "0.0.0-alpha.1",
   "description": "SvelteKit adapter for AWS Lambda with Middy",
   "type": "module",
   "engines": {
@@ -46,7 +46,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "github:willfarrell/sveltekit-adapter-middy",
+    "url": "git+https://github.com/willfarrell/sveltekit-adapter-middy.git",
     "directory": ""
   },
   "bugs": {
