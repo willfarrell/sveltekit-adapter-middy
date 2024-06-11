@@ -47,10 +47,15 @@ Creates a lambda that supports a Function URL with streaming responses.
   - `http-security-headers`
   - `ssm`/`secrets-manger`
 - Removes `x-sveltekit-page` headers
+- Override `Origin` header with `ORIGIN` env
 
 Note: Bring your own deployment.
 
 ## Getting started
+
+```bash
+npm i -D sveltekit-adapter-middy
+```
 
 ```js
 import adapter from 'sveltekit-adapter-middy'

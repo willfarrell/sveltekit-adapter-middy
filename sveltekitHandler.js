@@ -6,9 +6,6 @@ const lambdaHandler = async (event, context, { signal }) => {
   const { headers, rawQueryString, body: rawBody, isBase64Encoded } = event
   const { method, path } = event.requestContext.http
 
-  // Copy secrets from ssm into import.meta scope
-  //Object.assign(import.meta.env, env)
-
   // Override origin
   headers.origin = process.env.ORIGIN ?? headers.origin
 
@@ -42,7 +39,7 @@ const lambdaHandler = async (event, context, { signal }) => {
         'cache-control': 'no-cache'
       },
       multiValueHeaders: {},
-      body: Readable.from(rendered.body)
+      body: Readable.from(rendered.body ?? '')
     }
 
     for (const [key, value] of rendered.headers.entries()) {
