@@ -15,7 +15,7 @@ const sveltekitMiddleware = () => {
 
   const sveltekitMiddlewareAfter = async (request) => {
     // Workaround: AWS Function URLs doesn't support querystring keys that contain `/`
-    if (request.response.headers['content-type'].includes('text/html')) {
+    if (request.response.headers?.['content-type'].includes('text/html')) {
       const stream = stringReplaceStream({
         pattern: formActionPattern,
         replacement: formActionReplacement
