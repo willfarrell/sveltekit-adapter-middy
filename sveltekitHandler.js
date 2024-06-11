@@ -44,7 +44,7 @@ const lambdaHandler = async (event, context, { signal }) => {
 
     for (const [key, value] of rendered.headers.entries()) {
       if (key === 'set-cookie') {
-        response.multiValueHeaders[key] = setCookie.splitCookiesString(value)
+        response.multiValueHeaders[key] = splitCookiesString(value)
       } else if (key === 'x-sveltekit-page') {
         // excluded, security
       } else {
