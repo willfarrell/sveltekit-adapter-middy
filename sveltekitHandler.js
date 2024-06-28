@@ -38,7 +38,6 @@ const lambdaHandler = async (event, context, { signal }) => {
       headers: {
         'cache-control': 'no-cache'
       },
-      multiValueHeaders: {},
       body: Readable.from(rendered.body ?? '')
     }
 
