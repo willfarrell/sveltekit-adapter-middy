@@ -1,5 +1,4 @@
 import { Readable } from 'node:stream'
-import { splitCookiesString } from 'set-cookie-parser'
 
 const lambdaHandler = async (event, context, { signal }) => {
   const { server, env } = context
@@ -26,7 +25,6 @@ const lambdaHandler = async (event, context, { signal }) => {
     }),
     {
       getClientAddress() {
-        console.log('getClientAddress', headers['x-forwarded-for'])
         return headers['x-forwarded-for']
       }
     }
@@ -43,7 +41,8 @@ const lambdaHandler = async (event, context, { signal }) => {
 
     for (const [key, value] of rendered.headers.entries()) {
       if (key === 'set-cookie') {
-        response.cookies = splitCookiesString(value)
+        response.cookies ??= []
+        response.cookies.push(value)
       } else if (key !== 'x-sveltekit-page') {
         // `x-sveltekit-page` excluded, security
         response.headers[key] = value

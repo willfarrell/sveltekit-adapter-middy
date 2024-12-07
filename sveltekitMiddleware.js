@@ -1,6 +1,6 @@
 import { stringReplaceStream } from '@datastream/string'
-import { Server } from './index.js'
-import { manifest } from './manifest.js'
+import { Server } from './index.js' // From build directory
+import { manifest } from './manifest.js' // From build directory
 
 const server = new Server(manifest)
 const init = server.init({ env: process.env })
