@@ -58,8 +58,8 @@
     "url": "https://github.com/sponsors/willfarrell"
   },
   "dependencies": {
-    "@datastream/string": "0.0.36",
-    "@middy/core": "5.4.0",
-    "esbuild": "^0.21.0"
+    "@datastream/string": "0.0.40",
+    "@middy/core": "^6.0.0",
+    "esbuild": "^0.24.0"
   }
 }
