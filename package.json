@@ -1,6 +1,6 @@
 {
   "name": "sveltekit-adapter-middy",
-  "version": "0.0.0-alpha.9",
+  "version": "0.0.0-alpha.10",
   "description": "SvelteKit adapter for AWS Lambda with Middy",
   "type": "module",
   "engines": {
@@ -60,6 +60,6 @@
   "dependencies": {
     "@datastream/string": "0.0.40",
     "@middy/core": "^6.0.0",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.25.0"
   }
 }
