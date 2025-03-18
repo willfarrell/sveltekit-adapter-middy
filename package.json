@@ -1,6 +1,6 @@
 {
   "name": "sveltekit-adapter-middy",
-  "version": "0.0.0-alpha.10",
+  "version": "0.0.0-alpha.11",
   "description": "SvelteKit adapter for AWS Lambda with Middy",
   "type": "module",
   "engines": {

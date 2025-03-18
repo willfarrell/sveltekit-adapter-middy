@@ -36,7 +36,7 @@ const lambdaHandler = async (event, context, { signal }) => {
       headers: {
         'cache-control': 'no-cache'
       },
-      body: Readable.from(rendered.body ?? '')
+      body: ''
     }
 
     for (const [key, value] of rendered.headers.entries()) {
@@ -47,6 +47,10 @@ const lambdaHandler = async (event, context, { signal }) => {
         // `x-sveltekit-page` excluded, security
         response.headers[key] = value
       }
+    }
+
+    if (rendered.body) {
+      response.body = Readable.from(rendered.body)
     }
 
     return response
