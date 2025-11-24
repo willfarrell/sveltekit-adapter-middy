@@ -6,7 +6,7 @@ const lambdaHandler = async (event, context, { signal }) => {
   const { method, path } = event.requestContext.http
 
   // Override origin
-  headers.origin = process.env.ORIGIN ?? headers.origin
+  headers.origin = process.env.HEADER_ORIGIN ?? headers.origin ?? 'https://example.com'
 
   const queryString = rawQueryString ? `?${rawQueryString}` : ''
   const url = `${headers.origin}${path}${queryString}`
