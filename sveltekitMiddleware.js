@@ -1,31 +1,33 @@
-import { stringReplaceStream } from '@datastream/string'
-import { Server } from './index.js' // From build directory
-import { manifest } from './manifest.js' // From build directory
+// Copyright 2026 will Farrell, and sveltekit-adapter-middy contributors.
+// SPDX-License-Identifier: MIT
+import { stringReplaceStream } from "@datastream/string";
+import { Server } from "./index.js"; // From build directory
+import { manifest } from "./manifest.js"; // From build directory
 
-const server = new Server(manifest)
-const init = server.init({ env: process.env })
+const server = new Server(manifest);
+const init = server.init({ env: process.env });
 
-const formActionPattern = /action="\?\//g
-const formActionReplacement = 'action="?%2F'
+const formActionPattern = /action="\?\//g;
+const formActionReplacement = 'action="?%2F';
 const sveltekitMiddleware = () => {
-  const sveltekitMiddlewareBefore = async (request) => {
-    request.context.server = server
-    await init
-  }
+	const sveltekitMiddlewareBefore = async (request) => {
+		request.context.server = server;
+		await init;
+	};
 
-  const sveltekitMiddlewareAfter = async (request) => {
-    // Workaround: AWS Function URLs doesn't support querystring keys that contain `/`
-    if (request.response.headers?.['content-type']?.includes('text/html')) {
-      const stream = stringReplaceStream({
-        pattern: formActionPattern,
-        replacement: formActionReplacement
-      })
-      request.response.body.pipe(stream)
-    }
-  }
-  return {
-    before: sveltekitMiddlewareBefore,
-    after: sveltekitMiddlewareAfter
-  }
-}
-export default sveltekitMiddleware
+	const sveltekitMiddlewareAfter = async (request) => {
+		// Workaround: AWS Function URLs doesn't support querystring keys that contain `/`
+		if (request.response.headers?.["content-type"]?.includes("text/html")) {
+			const stream = stringReplaceStream({
+				pattern: formActionPattern,
+				replacement: formActionReplacement,
+			});
+			request.response.body.pipe(stream);
+		}
+	};
+	return {
+		before: sveltekitMiddlewareBefore,
+		after: sveltekitMiddlewareAfter,
+	};
+};
+export default sveltekitMiddleware;
