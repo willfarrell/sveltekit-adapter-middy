@@ -176,7 +176,7 @@ test("sveltekitHandler: uses HEADER_ORIGIN env var when set", async () => {
 		env: process.env,
 	};
 	await lambdaHandler(event, context, { signal: new AbortController().signal });
-	ok(capturedUrl.startsWith("https://custom-origin.com"));
+	strictEqual(capturedUrl, "https://custom-origin.com/test");
 	if (originalEnv === undefined) delete process.env.HEADER_ORIGIN;
 	else process.env.HEADER_ORIGIN = originalEnv;
 });
