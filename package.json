@@ -1,6 +1,6 @@
 {
 	"name": "sveltekit-adapter-middy",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "SvelteKit adapter for AWS Lambda with Middy",
 	"type": "module",
 	"engines": {
@@ -89,7 +89,7 @@
 		"husky": "^9.0.0",
 		"license-check-and-add": "4.0.5",
 		"tinybench": "^6.0.0",
-		"tstyche": "^3.0.0"
+		"tstyche": "^6.0.0"
 	},
 	"dependencies": {
 		"@datastream/string": "0.0.42",
