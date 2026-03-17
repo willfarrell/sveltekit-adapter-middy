@@ -89,7 +89,7 @@
 		"husky": "^9.0.0",
 		"license-check-and-add": "4.0.5",
 		"tinybench": "^6.0.0",
-		"tstyche": "^3.0.0"
+		"tstyche": "^6.0.0"
 	},
 	"dependencies": {
 		"@datastream/string": "0.0.42",
