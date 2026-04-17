@@ -92,7 +92,7 @@
 		"tstyche": "^7.0.0"
 	},
 	"dependencies": {
-		"@datastream/string": "0.1.6",
+		"@datastream/string": "0.3.2",
 		"@middy/core": "^7.0.0",
 		"esbuild": "^0.28.0"
 	}
