@@ -5,12 +5,20 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 14
     groups:
       everything:
         patterns:
           - "*"
   - package-ecosystem: npm
+    target-branch: develop
     directory: "/"
     schedule:
       interval: "weekly"
-    cooldown-period: 15
+    cooldown:
+      default-days: 14
+    ignore:
+      # typescript >=7 (Go compiler) drops the JS server API tstyche requires
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

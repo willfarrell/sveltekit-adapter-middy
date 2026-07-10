@@ -14,9 +14,8 @@ const lambdaHandler = async (event, context, { signal: _signal }) => {
 	const queryString = rawQueryString ? `?${rawQueryString}` : "";
 	const url = `${headers.origin}${path}${queryString}`;
 
-	const encoding = isBase64Encoded
-		? "base64"
-		: (headers["content-encoding"] ?? "utf-8");
+	// Buffer.from defaults a missing encoding to utf-8
+	const encoding = isBase64Encoded ? "base64" : headers["content-encoding"];
 	const body =
 		typeof rawBody === "string" ? Buffer.from(rawBody, encoding) : rawBody;
 
@@ -53,7 +52,7 @@ const lambdaHandler = async (event, context, { signal: _signal }) => {
 		}
 
 		if (rendered.body) {
-			response.body = Readable.from(rendered.body);
+			response.body = Readable.fromWeb(rendered.body);
 		}
 
 		return response;
