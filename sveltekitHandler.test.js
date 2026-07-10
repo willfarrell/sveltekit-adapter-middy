@@ -180,3 +180,35 @@ test("sveltekitHandler: uses HEADER_ORIGIN env var when set", async () => {
 	if (originalEnv === undefined) delete process.env.HEADER_ORIGIN;
 	else process.env.HEADER_ORIGIN = originalEnv;
 });
+
+test("sveltekitHandler: body streams rendered HTML as UTF-8 text", async () => {
+	const responseBody = new ReadableStream({
+		start(controller) {
+			controller.enqueue(new TextEncoder().encode("<h1>Héllo</h1>"));
+			controller.close();
+		},
+	});
+	const mockResponse = new Response(responseBody, {
+		status: 200,
+		headers: { "content-type": "text/html" },
+	});
+	const event = {
+		headers: { origin: "https://mysite.com" },
+		rawQueryString: "",
+		body: null,
+		isBase64Encoded: false,
+		requestContext: { http: { method: "GET", path: "/page" } },
+	};
+	const context = {
+		server: { respond: async () => mockResponse },
+		env: process.env,
+	};
+	const result = await lambdaHandler(event, context, {
+		signal: new AbortController().signal,
+	});
+	let text = "";
+	for await (const chunk of result.body) {
+		text += chunk;
+	}
+	strictEqual(text, "<h1>Héllo</h1>");
+});
