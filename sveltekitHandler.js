@@ -53,7 +53,7 @@ const lambdaHandler = async (event, context, { signal: _signal }) => {
 		}
 
 		if (rendered.body) {
-			response.body = Readable.from(rendered.body);
+			response.body = Readable.fromWeb(rendered.body);
 		}
 
 		return response;
