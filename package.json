@@ -100,7 +100,8 @@
 		"husky": "^9.1.7",
 		"license-check-and-add": "4.0.5",
 		"tinybench": "^6.0.2",
-		"tstyche": "^7.2.1"
+		"tstyche": "^7.2.1",
+		"typescript": "^5.9.3"
 	},
 	"overrides": {
 		"qs": "^6.15.2"

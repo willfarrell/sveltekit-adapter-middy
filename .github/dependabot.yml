@@ -18,3 +18,7 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 14
+    ignore:
+      # typescript >=7 (Go compiler) drops the JS server API tstyche requires
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]

@@ -7,7 +7,7 @@
 	},
 	"coverageAnalysis": "off",
 	"ignorePatterns": ["tsconfig.json"],
-	"mutate": ["*.js", "!*.test.js", "!*.fuzz.js", "!*.perf.js", "!*.config.js"],
+	"mutate": ["sveltekitHandler.js", "sveltekitMiddleware.js"],
 	"reporters": ["progress", "clear-text"],
 	"thresholds": {
 		"high": 100,

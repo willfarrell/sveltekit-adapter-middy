@@ -1,4 +1,4 @@
-import { strictEqual } from "node:assert";
+import { ok, strictEqual } from "node:assert";
 import { cpSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +16,7 @@ cpSync(
 );
 writeFileSync(
 	join(buildDir, "index.js"),
-	"export class Server { init() { return Promise.resolve(); } }",
+	"export class Server { init(opts) { globalThis.__serverInitOpts = opts; return Promise.resolve(); } }",
 );
 writeFileSync(join(buildDir, "manifest.js"), "export const manifest = {};");
 symlinkSync(
@@ -37,6 +37,25 @@ const readBody = async (body) => {
 	}
 	return text;
 };
+
+test("sveltekitMiddleware: provides server to context and initializes with env", async () => {
+	const request = { context: {} };
+	await sveltekitMiddleware().before(request);
+	ok(request.context.server);
+	strictEqual(globalThis.__serverInitOpts.env, process.env);
+});
+
+test("sveltekitMiddleware: ignores responses without headers", async () => {
+	const request = { response: {} };
+	await sveltekitMiddleware().after(request);
+	strictEqual(request.response.body, undefined);
+});
+
+test("sveltekitMiddleware: ignores responses without content-type", async () => {
+	const request = { response: { headers: {}, body: null } };
+	await sveltekitMiddleware().after(request);
+	strictEqual(request.response.body, null);
+});
 
 test("sveltekitMiddleware: encodes form action querystring slashes in html responses", async () => {
 	const request = {
