@@ -71,6 +71,18 @@ test("sveltekitMiddleware: encodes form action querystring slashes in html respo
 	);
 });
 
+test("sveltekitMiddleware: keeps multi-byte characters split across chunks", async () => {
+	const request = {
+		response: {
+			headers: { "content-type": "text/html" },
+			// "é" arriving as two buffers, as any re-chunked stream can deliver it
+			body: Readable.from([Buffer.from([0xc3]), Buffer.from([0xa9])]),
+		},
+	};
+	await sveltekitMiddleware().after(request);
+	strictEqual(await readBody(request.response.body), "é");
+});
+
 test("sveltekitMiddleware: leaves non-html responses untouched", async () => {
 	const body = htmlBody('{"action":"?/login"}');
 	const request = {

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const name = "@middy/sveltekit";
-const files = fileURLToPath(new URL("./", import.meta.url).href);
+const files = fileURLToPath(new URL("./", import.meta.url));
 
 // `src/routes/admin/handler.js` -> `/admin`, matching the route id: layout
 // groups `(app)` are stripped, param segments `[[lang]]` are kept as written
@@ -83,13 +83,10 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 			await builder.writeServer(tmp);
 
 			builder.copy(
-				`${files}/sveltekitMiddleware.js`,
+				`${files}sveltekitMiddleware.js`,
 				`${tmp}/sveltekitMiddleware.js`,
 			);
-			builder.copy(
-				`${files}/sveltekitHandler.js`,
-				`${tmp}/sveltekitHandler.js`,
-			);
+			builder.copy(`${files}sveltekitHandler.js`, `${tmp}/sveltekitHandler.js`);
 
 			const entries = Object.entries(split).map(([name, value]) => {
 				const config = typeof value === "object" ? value : { prefix: value };
@@ -105,11 +102,10 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 			const resolveOptions = {
 				routesDir: builder.config.kit.files.routes,
 				handlerPath,
-				builtin: `${files}/handler.js`,
+				builtin: `${files}handler.js`,
 			};
 
 			try {
-				// ponytail: sequential builds sharing one manifest.js, parallelize if build time matters
 				for (const entry of entries) {
 					const entryHandler = resolveHandler(entry, resolveOptions);
 					builder.log.minor(`Building server: ${entry.name} (${entryHandler})`);
@@ -172,7 +168,7 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 			);
 		},
 		supports: {
-			read: () => true,
+			read: () => false,
 		},
 	};
 };

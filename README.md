@@ -32,7 +32,7 @@ Creates a lambda that supports a Function URL with streaming responses.
   - `ssm`/`secrets-manger`
 - Removes `x-sveltekit-page` headers
 - Multiple `Set-Cookies`
-- Override `Origin` header with `ORIGIN` env
+- Trusted request origin via `HEADER_ORIGIN`, keeping SvelteKit's CSRF check intact
 
 Note: Bring your own deployment.
 
@@ -60,6 +60,12 @@ export default {
 - `out` (string): Relative path to build dir. Defaults to `build`
 - `esbuildOptions` (object): `esbuild` option overrides. See [code]() for defaults.
 - `split` (object): Route splitting, `name` to route prefix. Defaults to `{}` (single lambda).
+
+### Request details
+
+- `getClientAddress()` returns the rightmost entry of `x-forwarded-for`, falling back to `requestContext.http.sourceIp`. CloudFront appends the viewer ip to any list a client supplies, so the rightmost entry is the one a client can't forge. This assumes exactly one trusted hop in front of the lambda — add another proxy and the trustworthy entry moves.
+- `read()` from `$app/server` is not supported. Static assets are written to `out/assets` for S3/CloudFront rather than bundled into the lambda, so there's no file for it to read. Using it fails the build rather than the request.
+- A body on a `GET` or `HEAD` is dropped; `Request` refuses to carry one.
 
 ### Route splitting
 
@@ -133,6 +139,16 @@ Notes:
 - CloudFront: Route to static assets / pages, with fallback to server side rendering
 - S3: store static assets and pages
 - Lambda Function URL: server side rendering
+
+## Upgrading to 0.4
+
+Two behaviour changes need action:
+
+**Set `HEADER_ORIGIN`.** It previously overwrote the client's `Origin` header and was used as the request url origin, which made SvelteKit's CSRF check compare a value against itself — cross-site form posts were never rejected. The url origin now comes from `HEADER_ORIGIN` (or `host`) and the client's header is left alone, so the check works. If `HEADER_ORIGIN` doesn't match the origin browsers actually use, your own form posts will start returning 403.
+
+**`read()` from `$app/server` now fails the build.** It was declared as supported but never wired up, so it failed at runtime instead. If a route uses it, either drop the call or fetch the asset from your CDN.
+
+Also: a request body arriving on a `GET`/`HEAD` is dropped rather than throwing, `content-encoding` is no longer misread as a body encoding (`gzip` threw), and `getClientAddress()` returns a single ip rather than the raw `x-forwarded-for` list.
 
 ## Roadmap
 

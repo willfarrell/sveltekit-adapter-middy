@@ -21,9 +21,11 @@ test("adapter: returns object with name property", () => {
 	strictEqual(adapter.name, "@middy/sveltekit");
 });
 
-test("adapter: supports.read returns true", () => {
+// Assets live in S3/CloudFront and `server.init` gets no `read`, so claiming
+// support would only move the failure from build time to runtime
+test("adapter: supports.read returns false", () => {
 	const adapter = sveltekitAdapterMiddy();
-	strictEqual(adapter.supports.read(), true);
+	strictEqual(adapter.supports.read(), false);
 });
 
 test("adapter: has adapt method", () => {
