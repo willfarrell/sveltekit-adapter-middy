@@ -34,7 +34,7 @@ test("sveltekitHandler: returns rendered response with correct status and header
 		headers: { "content-type": "text/html", "cache-control": "max-age=60" },
 	});
 	const event = {
-		headers: { origin: "https://mysite.com" },
+		headers: { host: "mysite.com" },
 		rawQueryString: "foo=bar",
 		body: null,
 		isBase64Encoded: false,
@@ -205,18 +205,20 @@ test("sveltekitHandler: handles base64 encoded body", async () => {
 	strictEqual(await capturedRequest.text(), "hello");
 });
 
-test("sveltekitHandler: decodes body using content-encoding header", async () => {
+// `content-encoding` is a compression scheme (gzip, br), not a Buffer encoding:
+// `Buffer.from(body, "gzip")` throws `ERR_UNKNOWN_ENCODING`
+test("sveltekitHandler: content-encoding is not treated as a body encoding", async () => {
 	const mockResponse = new Response("ok", {
 		status: 200,
 		headers: { "content-type": "text/plain" },
 	});
 	const event = {
 		headers: {
-			origin: "https://mysite.com",
-			"content-encoding": "hex",
+			host: "mysite.com",
+			"content-encoding": "gzip",
 		},
 		rawQueryString: "",
-		body: Buffer.from("hello").toString("hex"),
+		body: "hello",
 		isBase64Encoded: false,
 		requestContext: { http: { method: "POST", path: "/api" } },
 	};
@@ -232,6 +234,32 @@ test("sveltekitHandler: decodes body using content-encoding header", async () =>
 	};
 	await lambdaHandler(event, context, { signal: new AbortController().signal });
 	strictEqual(await capturedRequest.text(), "hello");
+});
+
+test("sveltekitHandler: drops a body on GET, which Request forbids", async () => {
+	const mockResponse = new Response("ok", { status: 200 });
+	const event = {
+		headers: { host: "mysite.com" },
+		rawQueryString: "",
+		body: "unexpected",
+		isBase64Encoded: false,
+		requestContext: { http: { method: "GET", path: "/" } },
+	};
+	let capturedRequest;
+	const context = {
+		server: {
+			respond: async (req) => {
+				capturedRequest = req;
+				return mockResponse;
+			},
+		},
+		env: process.env,
+	};
+	const result = await lambdaHandler(event, context, {
+		signal: new AbortController().signal,
+	});
+	strictEqual(result.statusCode, 200);
+	strictEqual(await capturedRequest.text(), "");
 });
 
 test("sveltekitHandler: getClientAddress returns x-forwarded-for header", async () => {
@@ -269,7 +297,7 @@ test("sveltekitHandler: uses HEADER_ORIGIN env var when set", async () => {
 	const mockResponse = new Response("ok", { status: 200, headers: {} });
 	let capturedUrl;
 	const event = {
-		headers: {},
+		headers: { host: "ignored.com" },
 		rawQueryString: "",
 		body: null,
 		isBase64Encoded: false,
@@ -286,6 +314,37 @@ test("sveltekitHandler: uses HEADER_ORIGIN env var when set", async () => {
 	};
 	await lambdaHandler(event, context, { signal: new AbortController().signal });
 	strictEqual(capturedUrl, "https://custom-origin.com/test");
+	if (originalEnv === undefined) delete process.env.HEADER_ORIGIN;
+	else process.env.HEADER_ORIGIN = originalEnv;
+});
+
+// SvelteKit rejects cross-site form posts by comparing the client's `origin`
+// header against `url.origin`. Deriving the url from that same header would
+// make them equal by construction and the check could never fail.
+test("sveltekitHandler: passes the client origin through untouched", async () => {
+	const originalEnv = process.env.HEADER_ORIGIN;
+	process.env.HEADER_ORIGIN = "https://mysite.com";
+	const mockResponse = new Response("ok", { status: 200 });
+	let capturedRequest;
+	const event = {
+		headers: { origin: "https://evil.com", host: "mysite.com" },
+		rawQueryString: "",
+		body: "a=1",
+		isBase64Encoded: false,
+		requestContext: { http: { method: "POST", path: "/login" } },
+	};
+	const context = {
+		server: {
+			respond: async (req) => {
+				capturedRequest = req;
+				return mockResponse;
+			},
+		},
+		env: process.env,
+	};
+	await lambdaHandler(event, context, { signal: new AbortController().signal });
+	strictEqual(capturedRequest.headers.get("origin"), "https://evil.com");
+	strictEqual(new URL(capturedRequest.url).origin, "https://mysite.com");
 	if (originalEnv === undefined) delete process.env.HEADER_ORIGIN;
 	else process.env.HEADER_ORIGIN = originalEnv;
 });

@@ -22,7 +22,9 @@ const sveltekitMiddleware = () => {
 				pattern: formActionPattern,
 				replacement: formActionReplacement,
 			});
-			request.response.body = request.response.body.pipe(stream);
+			request.response.body = request.response.body
+				.setEncoding("utf8")
+				.pipe(stream);
 		}
 	};
 	return {

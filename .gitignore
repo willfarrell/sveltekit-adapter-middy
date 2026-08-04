@@ -129,5 +129,10 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
+# Mutation testing (StrykerJS)
+test-mutation-results.html
+test-mutation-results.json
+stryker.log
+
 # OS
 .DS_Store
