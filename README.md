@@ -59,6 +59,39 @@ export default {
 - `handlerPath` (string): Relative path to handler override file. Overriding allows you to add in Content-Encoding, Security Headers, and pass in secrets more securely. Defaults to build-in minimalist handler.
 - `out` (string): Relative path to build dir. Defaults to `build`
 - `esbuildOptions` (object): `esbuild` option overrides. See [code]() for defaults.
+- `split` (object): Route splitting, `name` to route prefix. Defaults to `{}` (single lambda).
+
+### Route splitting
+
+Build separate lambdas per route prefix, each with its own handler (and so its own middleware, IAM role, memory, and concurrency).
+
+```js
+adapter({
+  split: {
+    // `/admin/*` -> build/admin.mjs, using the default handler
+    admin: '/admin',
+    // `/api/*` -> build/api.mjs, using a custom handler
+    api: { prefix: '/api', handlerPath: './lambda/api.js' }
+  }
+})
+```
+
+Routes not matching any prefix go to `build/index.mjs`, as before. Static assets and prerendered pages are unaffected.
+
+Prefixes match SvelteKit **route ids**, not request paths, so param segments are written out literally:
+
+```js
+adapter({
+  split: {
+    // src/routes/[[lang]]/admin/**
+    admin: '/[[lang]]/admin',
+    // anything a prefix can't express
+    api: (route) => /(^|\/)api(\/|$)/.test(route.id)
+  }
+})
+```
+
+Routing requests to the right lambda is up to your infrastructure (eg CloudFront behaviours per path pattern). Note a localised prefix needs a pattern per shape — `/admin*` and `/*/admin*` for an optional `[[lang]]`. A split lambda only knows its own routes, so anything else sent to it renders a 404.
 
 ## Recommended Infrastructure
 

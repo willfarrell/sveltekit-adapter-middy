@@ -16,6 +16,11 @@ describe("index", () => {
 			out: "build",
 			handlerPath: "./handler.js",
 			esbuildOptions: {},
+			split: {
+				admin: "/[[lang]]/admin",
+				api: { prefix: "/api", handlerPath: "./api.js" },
+				docs: (route: { id: string }) => route.id.startsWith("/docs"),
+			},
 		});
 		expect(adapter).type.toHaveProperty("name");
 		expect(adapter).type.toHaveProperty("adapt");
