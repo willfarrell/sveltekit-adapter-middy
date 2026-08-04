@@ -1,11 +1,50 @@
 // Copyright 2026 will Farrell, and sveltekit-adapter-middy contributors.
 // SPDX-License-Identifier: MIT
-import { writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const name = "@middy/sveltekit";
 const files = fileURLToPath(new URL("./", import.meta.url).href);
+
+// `src/routes/admin/handler.js` -> `/admin`, matching the route id: layout
+// groups `(app)` are stripped, param segments `[[lang]]` are kept as written
+const routeHandlers = (routesDir) =>
+	new Map(
+		readdirSync(routesDir, { recursive: true })
+			.filter((file) => basename(file) === "handler.js")
+			.map((file) => [
+				`/${dirname(file)}`
+					.split(sep)
+					.join("/")
+					.replace(/\/\([^/]+\)/g, "")
+					.replace(/^\/\.$/, "/"),
+				join(routesDir, file),
+			]),
+	);
+
+// Specific beats global, explicit beats implicit: the entry's own `handlerPath`,
+// then a handler beside the route, then the top-level `handlerPath`, then
+// `src/handler.js`, then the built-in. A configured path that isn't there throws
+// rather than silently deploying the wrong middleware stack.
+export const resolveHandler = (entry, { routesDir, handlerPath, builtin }) => {
+	const configured = (path) => {
+		if (!existsSync(path)) {
+			throw new Error(`${name}: handlerPath not found: ${path}`);
+		}
+		return path;
+	};
+
+	if (entry.handlerPath) return configured(entry.handlerPath);
+	const local =
+		typeof entry.prefix === "string" &&
+		routeHandlers(routesDir).get(entry.prefix);
+	if (local) return local;
+	if (handlerPath) return configured(handlerPath);
+	const project = join(dirname(routesDir), "handler.js");
+	return existsSync(project) ? project : builtin;
+};
 
 // Routes matching an entry prefix go to that entry, everything else to `index`.
 // Prefixes match route ids, so param segments are written out: `/[[lang]]/admin`.
@@ -26,12 +65,7 @@ export const splitRoutes = (routes, entries) => {
 };
 
 const sveltekitAdapterMiddy = (opts = {}) => {
-	const {
-		out = "build",
-		handlerPath = `${files}/handler.js`,
-		esbuildOptions = {},
-		split = {},
-	} = opts;
+	const { out = "build", handlerPath, esbuildOptions = {}, split = {} } = opts;
 
 	return {
 		name,
@@ -62,16 +96,23 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 				return {
 					name,
 					prefix: config.prefix,
-					handlerPath: config.handlerPath ?? handlerPath,
+					handlerPath: config.handlerPath,
 				};
 			});
 			const routes = splitRoutes(builder.routes, entries);
-			entries.push({ name: "index", handlerPath });
+			entries.push({ name: "index" });
+
+			const resolveOptions = {
+				routesDir: builder.config.kit.files.routes,
+				handlerPath,
+				builtin: `${files}/handler.js`,
+			};
 
 			try {
 				// ponytail: sequential builds sharing one manifest.js, parallelize if build time matters
 				for (const entry of entries) {
-					builder.log.minor(`Building server: ${entry.name}`);
+					const entryHandler = resolveHandler(entry, resolveOptions);
+					builder.log.minor(`Building server: ${entry.name} (${entryHandler})`);
 					writeFileSync(
 						`${tmp}/manifest.js`,
 						[
@@ -87,7 +128,7 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 							)};`,
 						].join("\n\n"),
 					);
-					builder.copy(entry.handlerPath, `${tmp}/handler.js`);
+					builder.copy(entryHandler, `${tmp}/handler.js`);
 
 					const result = await esbuild.build({
 						target: "node24",

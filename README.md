@@ -56,7 +56,7 @@ export default {
 
 ### Options
 
-- `handlerPath` (string): Relative path to handler override file. Overriding allows you to add in Content-Encoding, Security Headers, and pass in secrets more securely. Defaults to build-in minimalist handler.
+- `handlerPath` (string): Relative path to handler override file. Overriding allows you to add in Content-Encoding, Security Headers, and pass in secrets more securely. Defaults to build-in minimalist handler. See [Handler resolution](#handler-resolution).
 - `out` (string): Relative path to build dir. Defaults to `build`
 - `esbuildOptions` (object): `esbuild` option overrides. See [code]() for defaults.
 - `split` (object): Route splitting, `name` to route prefix. Defaults to `{}` (single lambda).
@@ -92,6 +92,41 @@ adapter({
 ```
 
 Routing requests to the right lambda is up to your infrastructure (eg CloudFront behaviours per path pattern). Note a localised prefix needs a pattern per shape — `/admin*` and `/*/admin*` for an optional `[[lang]]`. A split lambda only knows its own routes, so anything else sent to it renders a 404.
+
+### Handler resolution
+
+Each entry picks its handler from the first of these that exists. Specific beats global, and within each tier explicit beats implicit:
+
+1. that entry's own `handlerPath`
+2. `handler.js` beside the route it serves, eg `src/routes/admin/handler.js` for prefix `/admin`
+3. the top-level `handlerPath`
+4. `src/handler.js`
+5. the built-in minimalist handler
+
+So a per-entry middleware stack needs no config at all — drop a `handler.js` next to the route:
+
+```js
+// src/routes/admin/handler.js — only this lambda loads these parameters
+import middy from '@middy/core'
+import { executionModeStreamifyResponse } from '@middy/core/StreamifyResponse'
+import ssm from '@middy/ssm'
+import sveltekitHandler from './sveltekitHandler.js'
+import sveltekitMiddleware from './sveltekitMiddleware.js'
+
+export const handler = middy({ executionMode: executionModeStreamifyResponse })
+  .use([
+    ssm({ fetchData: { dbUrl: '/app/admin/db-url' }, setToContext: true }),
+    sveltekitMiddleware()
+  ])
+  .handler(sveltekitHandler)
+```
+
+Notes:
+
+- Handler files are copied into the build directory before bundling, so `./sveltekitHandler.js` and `./sveltekitMiddleware.js` resolve there, not next to your source file. Importing your own project code by relative path won't resolve; bare package specifiers are fine.
+- A `handlerPath` that doesn't exist throws rather than silently falling back.
+- Prefixes match route ids, so layout groups are ignored: `src/routes/(app)/admin/handler.js` serves prefix `/admin`.
+- SvelteKit ignores non-`+` files in the routes directory, so a colocated `handler.js` doesn't become a route.
 
 ## Recommended Infrastructure
 
