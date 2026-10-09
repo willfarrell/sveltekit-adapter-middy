@@ -1,6 +1,6 @@
 // Copyright 2026 will Farrell, and sveltekit-adapter-middy contributors.
 // SPDX-License-Identifier: MIT
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
@@ -15,11 +15,10 @@ const routeHandlers = (routesDir) =>
 		readdirSync(routesDir, { recursive: true })
 			.filter((file) => basename(file) === "handler.js")
 			.map((file) => [
-				`/${dirname(file)}`
+				`/${dirname(file)
 					.split(sep)
-					.join("/")
-					.replace(/\/\([^/]+\)/g, "")
-					.replace(/^\/\.$/, "/"),
+					.filter((segment) => segment !== "." && !segment.startsWith("("))
+					.join("/")}`,
 				join(routesDir, file),
 			]),
 	);
@@ -37,9 +36,8 @@ export const resolveHandler = (entry, { routesDir, handlerPath, builtin }) => {
 	};
 
 	if (entry.handlerPath) return configured(entry.handlerPath);
-	const local =
-		typeof entry.prefix === "string" &&
-		routeHandlers(routesDir).get(entry.prefix);
+	// Function prefixes and `index` (no prefix) never match a route id key
+	const local = routeHandlers(routesDir).get(entry.prefix);
 	if (local) return local;
 	if (handlerPath) return configured(handlerPath);
 	const project = join(dirname(routesDir), "handler.js");
@@ -54,18 +52,28 @@ const matches = ({ prefix }, route) =>
 		? prefix(route)
 		: route.id === prefix || route.id.startsWith(`${prefix}/`);
 
+// Specific beats global: the longest string prefix is tried first, function
+// prefixes last in the order given
+const specificity = ({ prefix }) =>
+	typeof prefix === "string" ? prefix.length : -1;
+
 export const splitRoutes = (routes, entries) => {
 	const split = { index: [] };
 	for (const { name } of entries) split[name] = [];
+	const ordered = entries.toSorted((a, b) => specificity(b) - specificity(a));
 	for (const route of routes) {
-		const owner = entries.find((entry) => matches(entry, route));
+		const owner = ordered.find((entry) => matches(entry, route));
 		split[owner?.name ?? "index"].push(route);
 	}
 	return split;
 };
 
+// Stryker disable all: build glue (log text, esbuild options), exercised by the adapt tests
 const sveltekitAdapterMiddy = (opts = {}) => {
 	const { out = "build", handlerPath, esbuildOptions = {}, split = {} } = opts;
+	if (Object.hasOwn(split, "index")) {
+		throw new Error(`${name}: split entry name "index" is reserved`);
+	}
 
 	return {
 		name,
@@ -76,9 +84,7 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 			builder.rimraf(tmp);
 
 			builder.log.minor("Copying static assets");
-			const _clientFiles = await builder.writeClient(
-				`${out}/assets${builder.config.kit.paths.base}`,
-			);
+			await builder.writeClient(`${out}/assets${builder.config.paths.base}`);
 
 			await builder.writeServer(tmp);
 
@@ -97,10 +103,17 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 				};
 			});
 			const routes = splitRoutes(builder.routes, entries);
+			for (const { name: entryName } of entries) {
+				if (routes[entryName].length === 0) {
+					builder.log.warn(
+						`${name}: split entry ${entryName} matches no routes`,
+					);
+				}
+			}
 			entries.push({ name: "index" });
 
 			const resolveOptions = {
-				routesDir: builder.config.kit.files.routes,
+				routesDir: builder.config.files.routes,
 				handlerPath,
 				builtin: `${files}handler.js`,
 			};
@@ -109,51 +122,38 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 				for (const entry of entries) {
 					const entryHandler = resolveHandler(entry, resolveOptions);
 					builder.log.minor(`Building server: ${entry.name} (${entryHandler})`);
-					writeFileSync(
-						`${tmp}/manifest.js`,
-						[
-							`export const manifest = ${builder.generateManifest({
-								relativePath: "./",
-								routes: routes[entry.name],
-							})};`,
-							`export const prerendered = new Set(${JSON.stringify(
-								builder.prerendered.paths,
-							)});`,
-							`export const base = ${JSON.stringify(
-								builder.config.kit.paths.base,
-							)};`,
-						].join("\n\n"),
-					);
+					builder.generateServerInstance(`${tmp}/server.js`, {
+						routes: routes[entry.name],
+						serverDirectory: tmp,
+					});
 					builder.copy(entryHandler, `${tmp}/handler.js`);
 
 					const result = await esbuild.build({
-						target: "node24",
+						target: "node26",
 						bundle: true,
 						platform: "node",
 						format: "esm",
 						treeShaking: true,
+						// Reported once, through the builder log, below
+						logLevel: "silent",
 						...esbuildOptions,
 						entryPoints: [`${tmp}/handler.js`],
 						outfile: `${out}/${entry.name}.mjs`,
 						external: ["node:*", ...(esbuildOptions?.external ?? [])],
 					});
 
-					if (result.warnings.length > 0) {
-						const formatted = await esbuild.formatMessages(result.warnings, {
-							kind: "warning",
-							color: true,
-						});
-
-						console.error(formatted.join("\n"));
-					}
+					const warnings = await esbuild.formatMessages(result.warnings, {
+						kind: "warning",
+					});
+					for (const warning of warnings) builder.log.warn(warning);
 				}
 			} catch (err) {
-				const formatted = await esbuild.formatMessages(err.errors, {
+				// Only esbuild failures carry `errors`, anything else is rethrown as is
+				if (!Array.isArray(err?.errors)) throw err;
+				const errors = await esbuild.formatMessages(err.errors, {
 					kind: "error",
-					color: true,
 				});
-
-				console.error(formatted.join("\n"));
+				for (const error of errors) builder.log.error(error);
 
 				throw new Error(
 					`Bundling with esbuild failed with ${err.errors.length} ${
@@ -163,8 +163,8 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 			}
 
 			builder.log.minor("Prerendering static pages");
-			const _prerenderedFiles = await builder.writePrerendered(
-				`${out}/prerendered${builder.config.kit.paths.base}`,
+			await builder.writePrerendered(
+				`${out}/prerendered${builder.config.paths.base}`,
 			);
 		},
 		supports: {

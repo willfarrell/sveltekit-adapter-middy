@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: MIT
 import { Readable } from "node:stream";
 
-const lambdaHandler = async (event, context, { signal: _signal }) => {
-	const { server, env: _env } = context;
-	const { headers, rawQueryString, body: rawBody, isBase64Encoded } = event;
+const lambdaHandler = async (event, context, { signal }) => {
+	const { server } = context;
+	const {
+		headers,
+		cookies,
+		rawQueryString,
+		body: rawBody,
+		isBase64Encoded,
+	} = event;
 	const { method, path, sourceIp } = event.requestContext.http;
 
 	// The url origin must come from a trusted source. SvelteKit's CSRF check
@@ -19,55 +25,58 @@ const lambdaHandler = async (event, context, { signal: _signal }) => {
 
 	// `content-encoding` is a compression scheme, not a Buffer encoding
 	const body =
-		typeof rawBody === "string"
-			? Buffer.from(rawBody, isBase64Encoded ? "base64" : "utf8")
-			: rawBody;
+		isBase64Encoded && rawBody ? Buffer.from(rawBody, "base64") : rawBody;
+
+	const requestHeaders = new Headers(headers);
+	// Function URLs move the `cookie` header into `event.cookies`
+	if (cookies?.length) requestHeaders.set("cookie", cookies.join("; "));
+
+	// Anyone can call a public Function URL with their own `x-forwarded-for`, so
+	// only the `XFF_DEPTH` entries appended by trusted proxies (eg CloudFront: 1)
+	// count. Unset, the TCP peer is the client.
+	const xffDepth = Number(process.env.XFF_DEPTH) || 0;
 
 	const rendered = await server.respond(
 		new Request(url, {
 			method,
-			headers: new Headers(headers),
+			signal,
+			headers: requestHeaders,
 			// Request throws if a GET/HEAD carries one, however it arrived
 			body: method === "GET" || method === "HEAD" ? null : body,
 		}),
 		{
+			platform: { event, context },
 			getClientAddress() {
-				// CloudFront appends the viewer ip to any client-supplied list, so
-				// the rightmost entry is the only one a client can't forge.
-				const forwarded = headers["x-forwarded-for"]?.split(",").at(-1)?.trim();
+				const forwarded =
+					xffDepth &&
+					headers["x-forwarded-for"]?.split(",").at(-xffDepth)?.trim();
 				return forwarded || sourceIp;
 			},
 		},
 	);
 
-	if (rendered) {
-		const response = {
-			statusCode: rendered.status,
-			headers: {
-				"cache-control": "no-cache",
-			},
-			body: "",
-		};
+	const response = {
+		statusCode: rendered.status,
+		headers: {
+			"cache-control": "no-cache",
+		},
+		body: "",
+	};
 
-		for (const [key, value] of rendered.headers.entries()) {
-			if (key === "set-cookie") {
-				response.cookies ??= [];
-				response.cookies.push(value);
-			} else if (key !== "x-sveltekit-page") {
-				// `x-sveltekit-page` excluded, security
-				response.headers[key] = value;
-			}
+	for (const [key, value] of rendered.headers.entries()) {
+		if (key === "set-cookie") {
+			response.cookies ??= [];
+			response.cookies.push(value);
+		} else if (key !== "x-sveltekit-page") {
+			// `x-sveltekit-page` excluded, security
+			response.headers[key] = value;
 		}
-
-		if (rendered.body) {
-			response.body = Readable.fromWeb(rendered.body);
-		}
-
-		return response;
 	}
 
-	return {
-		statusCode: 404,
-	};
+	if (rendered.body) {
+		response.body = Readable.fromWeb(rendered.body);
+	}
+
+	return response;
 };
 export default lambdaHandler;

@@ -1,8 +1,15 @@
-import { deepStrictEqual, ok, strictEqual, throws } from "node:assert";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { deepStrictEqual, ok, rejects, strictEqual, throws } from "node:assert";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import sveltekitAdapterMiddy, { resolveHandler, splitRoutes } from "./index.js";
 
 // `<tmp>/routes/admin/handler.js` and `<tmp>/routes/(app)/reports/handler.js`
@@ -156,4 +163,206 @@ test("splitRoutes: function prefix", () => {
 		"/[lang=locale]/admin",
 	]);
 	deepStrictEqual(ids(split.index), ["/[lang]/about"]);
+});
+
+// Shaped like the Kit 3 builder: `generateManifest` and `config.kit` are gone
+const kit3Builder = (overrides = {}) => {
+	const dir = mkdtempSync(join(tmpdir(), "adapter-middy-adapt-"));
+	const { routes } = routesFixture();
+	const calls = { generateServerInstance: [] };
+	const builder = {
+		log: { minor: () => {}, warn: () => {}, error: () => {} },
+		rimraf: () => {},
+		config: {
+			paths: { base: "" },
+			files: { routes },
+			get kit() {
+				throw new Error("config.kit is deprecated");
+			},
+		},
+		prerendered: { paths: [] },
+		routes: [{ id: "/" }, { id: "/admin" }],
+		getBuildDirectory: (name) => join(dir, name),
+		writeClient: () => [],
+		writePrerendered: () => [],
+		writeServer: (dest) => {
+			mkdirSync(dest, { recursive: true });
+			writeFileSync(
+				join(dest, "index.js"),
+				"export const create_server = () => ({ init: async () => {} });",
+			);
+		},
+		copy: (from, to) => writeFileSync(to, readFileSync(from)),
+		generateManifest: () => {
+			throw new Error("generateManifest has been removed");
+		},
+		generateServerInstance: (dest, opts) => {
+			calls.generateServerInstance.push({ dest, opts });
+			writeFileSync(
+				dest,
+				"import { create_server } from './index.js'; export const server = create_server({});",
+			);
+		},
+		...overrides,
+	};
+	return { builder, calls, out: join(dir, "build") };
+};
+
+// The build dir sits in the os tmpdir, so bare imports resolve from this repo
+const esbuildOptions = {
+	nodePaths: [fileURLToPath(new URL("./node_modules", import.meta.url))],
+};
+
+test("adapt: builds one server instance per split entry with its routes", async () => {
+	const { builder, calls, out } = kit3Builder();
+	const adapter = sveltekitAdapterMiddy({
+		out,
+		esbuildOptions,
+		split: { admin: "/admin" },
+	});
+	await adapter.adapt(builder);
+
+	deepStrictEqual(
+		calls.generateServerInstance.map(({ opts }) => opts.routes),
+		[[{ id: "/admin" }], [{ id: "/" }]],
+	);
+	ok(existsSync(join(out, "admin.mjs")));
+	ok(existsSync(join(out, "index.mjs")));
+});
+
+test("adapt: non-esbuild errors are rethrown intact", async () => {
+	const boom = new Error("boom");
+	const { builder, out } = kit3Builder({
+		generateServerInstance: () => {
+			throw boom;
+		},
+	});
+	await rejects(sveltekitAdapterMiddy({ out }).adapt(builder), (err) => {
+		strictEqual(err, boom);
+		return true;
+	});
+});
+
+test("adapt: esbuild errors are counted", async () => {
+	const { builder, out } = kit3Builder({
+		generateServerInstance: (dest) => writeFileSync(dest, "export const ="),
+	});
+	await rejects(
+		sveltekitAdapterMiddy({ out, esbuildOptions }).adapt(builder),
+		/Bundling with esbuild failed with 1 error$/,
+	);
+});
+
+test("splitRoutes: the most specific prefix wins, whatever the key order", () => {
+	const ids = (routes) => routes.map(({ id }) => id);
+	const routes = [{ id: "/admin" }, { id: "/admin/reports/[id]" }];
+
+	const split = splitRoutes(routes, [
+		{ name: "admin", prefix: "/admin" },
+		{ name: "reports", prefix: "/admin/reports" },
+	]);
+
+	deepStrictEqual(ids(split.admin), ["/admin"]);
+	deepStrictEqual(ids(split.reports), ["/admin/reports/[id]"]);
+});
+
+test("adapt: warns when a split entry matches no routes", async () => {
+	const warnings = [];
+	const { builder, out } = kit3Builder({
+		log: { minor: () => {}, warn: (message) => warnings.push(message) },
+	});
+	await sveltekitAdapterMiddy({
+		out,
+		esbuildOptions,
+		split: { admin: "/admin/" },
+	}).adapt(builder);
+	deepStrictEqual(warnings, [
+		"@middy/sveltekit: split entry admin matches no routes",
+	]);
+});
+
+// `index` is the remainder lambda, a split entry by that name would build it twice
+test("adapter: a split entry named index throws", () => {
+	throws(
+		() => sveltekitAdapterMiddy({ split: { index: "/home" } }),
+		/split entry name "index" is reserved/,
+	);
+});
+
+test("resolveHandler: a handler.js at the routes root serves prefix /", () => {
+	for (const dir of [[], ["(app)"]]) {
+		const { routes } = routesFixture();
+		mkdirSync(join(routes, ...dir), { recursive: true });
+		writeFileSync(join(routes, ...dir, "handler.js"), "");
+		strictEqual(
+			resolveHandler(
+				{ prefix: "/" },
+				{ routesDir: routes, builtin: "builtin.js" },
+			),
+			join(routes, ...dir, "handler.js"),
+		);
+	}
+});
+
+test("resolveHandler: other files beside a route are not handlers", () => {
+	const { routes } = routesFixture();
+	mkdirSync(join(routes, "blog"));
+	writeFileSync(join(routes, "blog", "+page.svelte"), "");
+	strictEqual(
+		resolveHandler(
+			{ prefix: "/blog" },
+			{ routesDir: routes, builtin: "builtin.js" },
+		),
+		"builtin.js",
+	);
+});
+
+test("splitRoutes: a string prefix beats a function prefix declared first", () => {
+	const split = splitRoutes(
+		[{ id: "/" }],
+		[
+			{ name: "all", prefix: (_route) => true },
+			{ name: "root", prefix: "/" },
+		],
+	);
+	deepStrictEqual(split.root, [{ id: "/" }]);
+});
+
+test("resolveHandler: a nested route-local handler.js serves its full route id", () => {
+	const { routes } = routesFixture();
+	mkdirSync(join(routes, "admin", "users"));
+	writeFileSync(join(routes, "admin", "users", "handler.js"), "");
+	strictEqual(
+		resolveHandler(
+			{ prefix: "/admin/users" },
+			{ routesDir: routes, builtin: "builtin.js" },
+		),
+		join(routes, "admin", "users", "handler.js"),
+	);
+});
+
+test("adapt: esbuild warnings go to the builder log", async () => {
+	const warnings = [];
+	const { builder, out } = kit3Builder({
+		log: { minor: () => {}, warn: (message) => warnings.push(message) },
+		generateServerInstance: (dest) =>
+			writeFileSync(
+				dest,
+				"export const dup = { a: 1, a: 2 }; export const server = { init: async () => {} };",
+			),
+	});
+	await sveltekitAdapterMiddy({ out, esbuildOptions }).adapt(builder);
+	strictEqual(warnings.length, 1);
+	ok(warnings[0].includes('Duplicate key "a"'));
+});
+
+test("adapt: esbuild errors go to the builder log", async () => {
+	const errors = [];
+	const { builder, out } = kit3Builder({
+		log: { minor: () => {}, warn: () => {}, error: (m) => errors.push(m) },
+		generateServerInstance: (dest) => writeFileSync(dest, "export const ="),
+	});
+	await rejects(sveltekitAdapterMiddy({ out, esbuildOptions }).adapt(builder));
+	strictEqual(errors.length, 1);
+	ok(errors[0].includes('Expected identifier but found "="'));
 });
