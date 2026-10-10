@@ -3,11 +3,10 @@
 	"packageManager": "npm",
 	"testRunner": "command",
 	"commandRunner": {
-		"command": "node --test --test-force-exit ./*.test.js"
+		"command": "node --test --test-force-exit --test-isolation=none ./*.test.js"
 	},
 	"coverageAnalysis": "off",
-	"ignorePatterns": ["tsconfig.json"],
-	"mutate": ["sveltekitHandler.js", "sveltekitMiddleware.js"],
+	"mutate": ["index.js", "sveltekitHandler.js", "sveltekitMiddleware.js"],
 	"reporters": ["progress", "clear-text"],
 	"thresholds": {
 		"high": 100,

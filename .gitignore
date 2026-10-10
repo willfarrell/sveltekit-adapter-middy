@@ -136,3 +136,6 @@ stryker.log
 
 # OS
 .DS_Store
+# e2e fixture build output
+e2e/fixture/build
+e2e/fixture/.svelte-kit

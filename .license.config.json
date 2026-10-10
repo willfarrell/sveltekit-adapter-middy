@@ -12,16 +12,19 @@
 		".github/**/*",
 		".husky/**/*",
 		"fixtures/*",
+		"e2e/fixture/**/*",
 		"commitlint.config.cjs",
 		"LICENSE",
 		".license.template",
 		"stryker.config.*",
 		"**/.gitignore",
+		"**/.npmrc",
 		"**/*.fuzz.js",
-		"**/*.perf.js",
+		"**/*.bench.js",
 		"**/*.test.js",
 		"**/*.md",
 		"**/*.yml",
+		"**/*.yaml",
 		".DS_Store"
 	]
 }
