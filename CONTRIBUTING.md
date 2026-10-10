@@ -11,6 +11,8 @@ npm install
 npm test
 ```
 
+`npm test` also runs the security scanners, which aren't npm packages: install [semgrep](https://semgrep.dev), [trufflehog](https://github.com/trufflesecurity/trufflehog), [gitleaks](https://github.com/gitleaks/gitleaks), [actionlint](https://github.com/rhysd/actionlint), [zizmor](https://github.com/zizmorcore/zizmor) and [trivy](https://trivy.dev) first. Without them, run the npm-only checks: `npm run test:lint && npm run test:unit && npm run test:e2e && npm run test:types && npm run test:mutation && npm run test:dast && npm run test:bench`.
+
 ## Committing
 
 Ensure git commits meet the following FLOSS Best Practices:

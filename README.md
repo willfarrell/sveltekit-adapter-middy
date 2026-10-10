@@ -29,43 +29,59 @@ Creates a lambda that supports a Function URL with streaming responses.
 - Extendable with Middy middlewares:
   - `http-content-encoding`
   - `http-security-headers`
-  - `ssm`/`secrets-manger`
+  - `ssm`/`secrets-manager`
 - Removes `x-sveltekit-page` headers
 - Multiple `Set-Cookies`
 - Trusted request origin via `HEADER_ORIGIN`, keeping SvelteKit's CSRF check intact
+- Lambda event and context available as `platform`
+- Server instrumentation (`src/instrumentation.server.js`, eg OpenTelemetry)
 
-Note: Bring your own deployment.
+Note: Bring your own deployment. The build writes one bundle per lambda to `out/<name>.mjs` (`index.mjs`, plus one per split entry), each exporting `handler`, so the Lambda handler setting is `index.handler`. The response is streamed, so create the Function URL with `InvokeMode: RESPONSE_STREAM`.
 
 ## Getting started
 
 ```bash
-npm i -D sveltekit-adapter-middy
+npm i -D sveltekit-adapter-middy @middy/core
 ```
 
+Requires SvelteKit 3, Middy 8, and Node.js 26 (to build and as the Lambda runtime). `@middy/core` is a peer dependency: the handler is bundled from your project, so it uses your copy.
+
+As of October 2026, the Lambda `nodejs26.x` runtime is in public preview, which AWS says not to use for production. Until it's generally available, you can set `esbuildOptions: { target: 'node24' }` and deploy on `nodejs24.x`.
+
 ```js
+// vite.config.js
+import { sveltekit } from '@sveltejs/kit/vite'
 import adapter from 'sveltekit-adapter-middy'
 
 export default {
-  kit: {
-    adapter: adapter({
-      // options
+  plugins: [
+    sveltekit({
+      adapter: adapter({
+        // options
+      })
     })
-  }
+  ]
 }
 ```
 
 ### Options
 
-- `handlerPath` (string): Relative path to handler override file. Overriding allows you to add in Content-Encoding, Security Headers, and pass in secrets more securely. Defaults to build-in minimalist handler. See [Handler resolution](#handler-resolution).
+- `handlerPath` (string): Relative path to handler override file. Overriding allows you to add in Content-Encoding, Security Headers, and pass in secrets more securely. Defaults to the built-in minimalist handler. See [Handler resolution](#handler-resolution).
 - `out` (string): Relative path to build dir. Defaults to `build`
-- `esbuildOptions` (object): `esbuild` option overrides. See [code]() for defaults.
-- `split` (object): Route splitting, `name` to route prefix. Defaults to `{}` (single lambda).
+- `esbuildOptions` (object): `esbuild` option overrides. See [`index.js`](index.js) for defaults (ESM bundle targeting `node26`).
+- `split` (object): Route splitting, `name` to route prefix. Defaults to `{}` (single lambda). `index` is reserved for the remainder lambda.
 
 ### Request details
 
-- `getClientAddress()` returns the rightmost entry of `x-forwarded-for`, falling back to `requestContext.http.sourceIp`. CloudFront appends the viewer ip to any list a client supplies, so the rightmost entry is the one a client can't forge. This assumes exactly one trusted hop in front of the lambda — add another proxy and the trustworthy entry moves.
+- `getClientAddress()` returns `requestContext.http.sourceIp`, the TCP peer, unless `XFF_DEPTH` is set. A Function URL is public, so anyone can call it with their own `x-forwarded-for`. Set `XFF_DEPTH` to the number of trusted proxies in front of the lambda (`1` for CloudFront) to use the entry that many places from the right. A trailing entry equal to `sourceIp` is skipped, since that's the Function URL recording its own peer rather than a proxy you trust. A value below `1` is treated as unset. Only do this when those proxies are the only way in, eg the Function URL uses `AWS_IAM` auth with CloudFront origin access control.
+- `platform` is `{ event, context }`: the Function URL event and the Lambda context, including anything middleware added (eg `ssm` with `setToContext`). Read it as `event.platform` in hooks, `load` and actions, and type it by declaring `App.Platform` in `src/app.d.ts`. Outside Lambda (`vite dev`, prerendering) it is `{ event: {}, context: {} }`, so reads don't throw, but values middleware adds only exist in Lambda.
+- `HEADER_ORIGIN` should be the origin browsers use, eg `https://example.com`. Without it the url origin comes from the `host` header, which behind CloudFront is the Function URL domain, so every form post fails the CSRF check. A warning is logged at cold start when it's unset.
 - `read()` from `$app/server` is not supported. Static assets are written to `out/assets` for S3/CloudFront rather than bundled into the lambda, so there's no file for it to read. Using it fails the build rather than the request.
 - A body on a `GET` or `HEAD` is dropped; `Request` refuses to carry one.
+- Function URLs move the `cookie` header into `event.cookies`; it's joined back into `cookie` for SvelteKit.
+- `src/instrumentation.server.js` is bundled into each lambda and runs at cold start, after the private env is set and before any app code. OpenTelemetry auto-instrumentation patches modules as they load, so it can only patch what isn't bundled: Node.js built-ins, and any package you mark `esbuildOptions.external` and ship with the lambda (eg in a layer).
+- `request.signal` aborts when Middy's early timeout fires, so fetches in `load` can stop work the response will never carry.
+- AWS documents the query string characters Function URLs support as `a-z A-Z 0-9 . _ - % & = +`, which leaves out a raw `/`. `sveltekitMiddleware` encodes the `?/action` form action URLs SvelteKit renders. It rewrites every `action="?/` in the html, so text that reads that way, eg a code sample, comes out as `action="?%2F` too. That only covers html rendered on the server: a form rendered in the browser after client-side navigation still has `action="?/login"`, and `use:enhance` posts to it. Write form actions pre-encoded, eg `<form method="POST" action="?%2Flogin">`, so they work either way. Encode any `/` in your own query strings too, eg `?redirectTo=%2Fadmin`, or in `fetch('?%2Faction')` calls from client code.
 
 ### Route splitting
 
@@ -97,6 +113,8 @@ adapter({
 })
 ```
 
+When prefixes overlap, the longest string prefix wins, so `/admin/reports` beats `/admin` whatever the key order. Function prefixes are tried after every string prefix, in the order given. An entry that matches no routes logs a warning; it's usually a typo, such as a trailing `/`.
+
 Routing requests to the right lambda is up to your infrastructure (eg CloudFront behaviours per path pattern). Note a localised prefix needs a pattern per shape — `/admin*` and `/*/admin*` for an optional `[[lang]]`. A split lambda only knows its own routes, so anything else sent to it renders a 404.
 
 ### Handler resolution
@@ -109,7 +127,7 @@ Each entry picks its handler from the first of these that exists. Specific beats
 4. `src/handler.js`
 5. the built-in minimalist handler
 
-So a per-entry middleware stack needs no config at all — drop a `handler.js` next to the route:
+So once a route has a `split` entry, its middleware stack needs no more config. Drop a `handler.js` next to the route (one beside a route that no `split` entry matches is not used):
 
 ```js
 // src/routes/admin/handler.js — only this lambda loads these parameters
@@ -121,6 +139,7 @@ import sveltekitMiddleware from './sveltekitMiddleware.js'
 
 export const handler = middy({ executionMode: executionModeStreamifyResponse })
   .use([
+    // `event.platform.context.dbUrl` in hooks, `load` and actions
     ssm({ fetchData: { dbUrl: '/app/admin/db-url' }, setToContext: true }),
     sveltekitMiddleware()
   ])
@@ -129,16 +148,50 @@ export const handler = middy({ executionMode: executionModeStreamifyResponse })
 
 Notes:
 
-- Handler files are copied into the build directory before bundling, so `./sveltekitHandler.js` and `./sveltekitMiddleware.js` resolve there, not next to your source file. Importing your own project code by relative path won't resolve; bare package specifiers are fine.
+- Keep `sveltekitMiddleware()` last in `.use([...])`. Middy runs `after` hooks in reverse order, so it then rewrites the html before anything else sees it. Compression from `http-content-encoding` listed after it would run first, and the rewrite would corrupt the compressed bytes.
+- `./sveltekitHandler.js` and `./sveltekitMiddleware.js` always resolve to the adapter's copies in the build directory, not to files next to your handler. Any other import, relative or bare, resolves from where your handler lives.
 - A `handlerPath` that doesn't exist throws rather than silently falling back.
 - Prefixes match route ids, so layout groups are ignored: `src/routes/(app)/admin/handler.js` serves prefix `/admin`.
+- A function prefix has no route directory, so it never picks up a route-local `handler.js`. Give it a `handlerPath`.
 - SvelteKit ignores non-`+` files in the routes directory, so a colocated `handler.js` doesn't become a route.
 
 ## Recommended Infrastructure
 
-- CloudFront: Route to static assets / pages, with fallback to server side rendering
+- CloudFront: Route to static assets / pages, with fallback to server side rendering. Not all of `/_app/*` is static: send `/_app/immutable/*` to S3, but remote function calls (`query`, `command`, `form`) go to `/_app/remote/*` and must reach the lambda (both under `paths.base`, with `_app` being `appDir`)
 - S3: store static assets and pages
-- Lambda Function URL: server side rendering
+- Lambda Function URL: server side rendering, with `InvokeMode: RESPONSE_STREAM`, and with `AWS_IAM` auth and CloudFront origin access control so CloudFront is the only way in
+
+## Upgrading to 0.5
+
+This release requires SvelteKit 3, Middy 8, and Node.js 26; use 0.4 for SvelteKit 2. `@middy/core` is now a peer dependency, so install it in your project: `npm i -D @middy/core`.
+
+Changes that need action:
+
+- **Set `XFF_DEPTH=1` behind CloudFront.** `getClientAddress()` now ignores `x-forwarded-for` unless `XFF_DEPTH` is set, because anyone calling the Function URL directly could forge it. Without it you get CloudFront's edge ip.
+
+Fixes that change behaviour:
+
+- Lambda event and context now reach SvelteKit as `platform`, so values middleware puts on the context are usable in hooks, `load` and actions.
+- esbuild warnings and errors are reported through the SvelteKit build log, once.
+- Request cookies now reach SvelteKit. They arrive in `event.cookies` and were previously dropped.
+- Streamed pages flush their shell as soon as it renders, instead of waiting for the next chunk.
+- An html response with no body (`HEAD`, `204`) no longer crashes the lambda.
+- Overlapping split prefixes resolve to the longest one rather than the first declared.
+- A `handler.js` in a root layout group (`src/routes/(app)/handler.js`) now serves prefix `/`.
+
+Server instrumentation (`src/instrumentation.server.js`) is supported; previously the build failed with `adapter_instrumentation_unsupported`.
+
+`event.platform` is `{ event: {}, context: {} }` under `vite dev` and while prerendering, rather than `undefined`.
+
+A request `Request` can't represent, eg a header value beyond Latin-1, gets a `400` rather than failing the lambda.
+
+Build logs and SvelteKit errors name the adapter `sveltekit-adapter-middy`, its package name, rather than `@middy/sveltekit`.
+
+Types now ship with the package, and the package resolves for `require()` as well as `import`.
+
+A custom handler is bundled from where it lives, so it can import your own project code by relative path.
+
+The server is now built with `builder.generateServerInstance`, so the build directory has `server.js` (exporting a ready `server`) in place of `manifest.js`. The bundled `sveltekitMiddleware.js` already uses it; a custom handler that imported `./manifest.js` or `Server` from `./index.js` should import `{ server }` from `./server.js` instead.
 
 ## Upgrading to 0.4
 
