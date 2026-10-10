@@ -235,11 +235,6 @@ jobs:
           queries: +security-and-quality
 
       # allowed-endpoints: >
-      #   registry.npmjs.org:443
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
-
-      # allowed-endpoints: >
       #   api.github.com:443
       #   uploads.github.com:443
       - name: Perform CodeQL Analysis
@@ -267,7 +262,7 @@ jobs:
 
       # https://semgrep.dev/docs/semgrep-ci/sample-ci-configs/#github-actions
       - name: semgrep
-        run: semgrep ci
+        run: semgrep scan --config auto --error
 
   # https://github.com/raven-actions/actionlint
   actionlint:

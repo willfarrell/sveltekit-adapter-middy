@@ -3,7 +3,7 @@
 	"packageManager": "npm",
 	"testRunner": "command",
 	"commandRunner": {
-		"command": "node --test --test-force-exit ./*.test.js"
+		"command": "node --test --test-force-exit --test-isolation=none ./*.test.js"
 	},
 	"coverageAnalysis": "off",
 	"mutate": ["index.js", "sveltekitHandler.js", "sveltekitMiddleware.js"],

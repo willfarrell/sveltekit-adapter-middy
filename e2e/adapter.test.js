@@ -23,6 +23,7 @@ globalThis.awslambda = {
 	},
 };
 process.env.HEADER_ORIGIN = "https://mysite.com";
+process.env.E2E_SECRET = "s3cret";
 
 const loadLambda = async (name) =>
 	(await import(pathToFileURL(join(build, `${name}.mjs`)))).handler;
@@ -63,9 +64,17 @@ test("e2e: renders with request cookies and the lambda context as platform", asy
 	ok(response.body.includes("function:e2e"), response.body);
 });
 
-test("e2e: form actions are rewritten for Function URL query strings", async () => {
+// `src/instrumentation.server.js` runs before the app, with dynamic env set
+test("e2e: server instrumentation runs first, with the private env", async () => {
 	const { body } = await invoke(await loadLambda("index"), {});
+	ok(body.includes("instrumented:s3cret"), body);
+});
+
+test("e2e: form actions are rewritten for Function URL query strings", async () => {
+	const { headers, body } = await invoke(await loadLambda("index"), {});
 	ok(body.includes('action="?%2Flogin"'), body);
+	// The rewrite grows the body, so a length SvelteKit set would truncate it
+	strictEqual(headers["content-length"], undefined);
 });
 
 test("e2e: a same-origin form post runs the action and sets its cookie", async () => {

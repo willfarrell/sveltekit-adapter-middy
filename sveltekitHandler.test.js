@@ -221,3 +221,29 @@ test("sveltekitHandler: getClientAddress falls back to sourceIp when the list is
 	strictEqual(await clientAddress("1.2.3.4", "2"), "9.9.9.9");
 	strictEqual(await clientAddress(undefined, "1"), "9.9.9.9");
 });
+
+// If the Function URL appends its TCP peer (CloudFront), that entry is not a
+// trusted proxy's, so `XFF_DEPTH=1` still means CloudFront's view of the client
+test("sveltekitHandler: getClientAddress skips a trailing entry that is the sourceIp", async () => {
+	strictEqual(await clientAddress("6.6.6.6, 1.2.3.4, 9.9.9.9", "1"), "1.2.3.4");
+});
+
+// A negative depth would count from the left, where the caller writes
+test("sveltekitHandler: getClientAddress ignores x-forwarded-for for a non-positive XFF_DEPTH", async () => {
+	strictEqual(
+		await clientAddress("1.1.1.1, 6.6.6.6, 2.2.2.2", "-1"),
+		"9.9.9.9",
+	);
+	strictEqual(await clientAddress("1.1.1.1, 6.6.6.6", "0"), "9.9.9.9");
+});
+
+// `Request` rejects header values beyond Latin-1; that is the client's error,
+// not a reason for the lambda to fail
+test("sveltekitHandler: a request Request can't represent is a 400", async () => {
+	const { result, request } = await handle({
+		headers: { host: "mysite.com", "x-name": "😀" },
+	});
+	strictEqual(result.statusCode, 400);
+	strictEqual(result.body, "");
+	strictEqual(request, undefined);
+});

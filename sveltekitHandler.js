@@ -27,33 +27,39 @@ const lambdaHandler = async (event, context, { signal }) => {
 	const body =
 		isBase64Encoded && rawBody ? Buffer.from(rawBody, "base64") : rawBody;
 
-	const requestHeaders = new Headers(headers);
-	// Function URLs move the `cookie` header into `event.cookies`
-	if (cookies?.length) requestHeaders.set("cookie", cookies.join("; "));
-
 	// Anyone can call a public Function URL with their own `x-forwarded-for`, so
 	// only the `XFF_DEPTH` entries appended by trusted proxies (eg CloudFront: 1)
 	// count. Unset, the TCP peer is the client.
-	const xffDepth = Number(process.env.XFF_DEPTH) || 0;
+	const xffDepth = Math.max(0, Number(process.env.XFF_DEPTH) || 0);
 
-	const rendered = await server.respond(
-		new Request(url, {
+	// The header object goes straight in: building a `Headers` first means
+	// Request copies every header twice
+	let request;
+	try {
+		request = new Request(url, {
 			method,
 			signal,
-			headers: requestHeaders,
+			headers,
 			// Request throws if a GET/HEAD carries one, however it arrived
 			body: method === "GET" || method === "HEAD" ? null : body,
-		}),
-		{
-			platform: { event, context },
-			getClientAddress() {
-				const forwarded =
-					xffDepth &&
-					headers["x-forwarded-for"]?.split(",").at(-xffDepth)?.trim();
-				return forwarded || sourceIp;
-			},
+		});
+		// Function URLs move the `cookie` header into `event.cookies`
+		if (cookies?.length) request.headers.set("cookie", cookies.join("; "));
+	} catch {
+		// Only the client's input can fail here, eg a header beyond Latin-1
+		return { statusCode: 400, body: "" };
+	}
+
+	const rendered = await server.respond(request, {
+		platform: { event, context },
+		getClientAddress() {
+			const forwarded =
+				headers["x-forwarded-for"]?.split(",").map((ip) => ip.trim()) ?? [];
+			// The Function URL may append its own peer, which no trusted proxy wrote
+			if (forwarded.at(-1) === sourceIp) forwarded.pop();
+			return (xffDepth && forwarded.at(-xffDepth)) || sourceIp;
 		},
-	);
+	});
 
 	const response = {
 		statusCode: rendered.status,

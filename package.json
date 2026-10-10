@@ -13,13 +13,10 @@
 	"publishConfig": {
 		"access": "public"
 	},
-	"module": "./index.js",
 	"exports": {
 		".": {
-			"import": {
-				"types": "./index.d.ts",
-				"default": "./index.js"
-			}
+			"types": "./index.d.ts",
+			"default": "./index.js"
 		}
 	},
 	"files": [
@@ -33,8 +30,8 @@
 		"prepare": "husky",
 		"git:pre-commit": "npm run git:lint-staged && npm run git:test-staged",
 		"git:commit-msg": "commitlint --config commitlint.config.cjs --edit",
-		"git:lint-staged": "npm run test:lint",
-		"git:unit-staged": "node --test",
+		"git:lint-staged": "biome check --staged --no-errors-on-unmatched",
+		"git:unit-staged": "node --test ./*.test.js",
 		"git:test-staged": "npm run git:unit-staged",
 		"lint": "biome check --write --no-errors-on-unmatched",
 		"test": "npm run test:lint && npm run test:unit && npm run test:e2e && npm run test:mutation && npm run test:types && npm run test:sast && npm run test:bench && npm run test:dast",
@@ -49,12 +46,12 @@
 		"test:sast:trivy": "trivy fs --scanners vuln,license --include-dev-deps --ignored-licenses 0BSD,Apache-2.0,BSD-1-Clause,BSD-2-Clause,BSD-3-Clause,CC0-1.0,CC-BY-4.0,ISC,MIT,Python-2.0,LGPL-3.0-or-later,MPL-2.0,BlueOak-1.0.0,Unlicense --exit-code 1 --disable-telemetry .",
 		"test:sast:trufflehog": "trufflehog filesystem --only-verified --log-level=-1 ./",
 		"test:sast:zizmor": "zizmor .github",
-		"test:lint": "biome check --staged --no-errors-on-unmatched",
-		"test:unit": "node --test --test-force-exit --experimental-test-coverage --test-coverage-lines=80 --test-coverage-branches=70 --test-coverage-functions=80 '--test-coverage-exclude=**/sveltekitMiddleware.js' --test-coverage-exclude=handler.js ./*.test.js",
+		"test:lint": "biome ci --no-errors-on-unmatched",
+		"test:unit": "node --test --test-force-exit --experimental-test-coverage --test-coverage-lines=100 --test-coverage-branches=100 --test-coverage-functions=100 --test-coverage-include=index.js --test-coverage-include=sveltekitHandler.js ./*.test.js",
 		"test:e2e": "node --test ./e2e/*.test.js",
 		"test:mutation": "stryker run",
 		"test:types": "tstyche",
-		"test:bench": "node --experimental-bench --bench './*.bench.js'",
+		"test:bench": "node ./handler.bench.js",
 		"test:dast": "npm run test:dast:fuzz",
 		"test:dast:fuzz": "node --test ./*.fuzz.js",
 		"rm": "npm run rm:macos && npm run rm:node_modules && npm run rm:lock",
@@ -85,8 +82,7 @@
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/willfarrell/sveltekit-adapter-middy.git",
-		"directory": ""
+		"url": "git+https://github.com/willfarrell/sveltekit-adapter-middy.git"
 	},
 	"bugs": {
 		"url": "https://github.com/willfarrell/sveltekit-adapter-middy/issues"
@@ -109,7 +105,7 @@
 	},
 	"overrides": {
 		"qs": "^6.15.2",
-		"brace-expansion": ">=5.0.12",
+		"brace-expansion": "^5.0.12",
 		"fast-uri": "^3.1.7"
 	},
 	"peerDependencies": {

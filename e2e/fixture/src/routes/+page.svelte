@@ -5,4 +5,5 @@ let { data } = $props();
 
 <p>session:{data.session}</p>
 <p>function:{data.functionName}</p>
+<p>instrumented:{data.instrumented}</p>
 <form method="POST" action="?/login"><button>Log in</button></form>

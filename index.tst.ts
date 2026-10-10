@@ -22,6 +22,16 @@ describe("index", () => {
 		});
 	});
 
+	// Exported for unit tests only; typing them would make them API to keep stable
+	test("does not type the internal helpers", () => {
+		expect<typeof import("./index.js")>().type.not.toHaveProperty(
+			"resolveHandler",
+		);
+		expect<typeof import("./index.js")>().type.not.toHaveProperty(
+			"splitRoutes",
+		);
+	});
+
 	test("rejects mistyped options", () => {
 		expect(sveltekitAdapterMiddy).type.not.toBeCallableWith({ out: 1 });
 		expect(sveltekitAdapterMiddy).type.not.toBeCallableWith({

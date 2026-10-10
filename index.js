@@ -1,11 +1,11 @@
 // Copyright 2026 will Farrell, and sveltekit-adapter-middy contributors.
 // SPDX-License-Identifier: MIT
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
-const name = "@middy/sveltekit";
+const name = "sveltekit-adapter-middy";
 const files = fileURLToPath(new URL("./", import.meta.url));
 
 // `src/routes/admin/handler.js` -> `/admin`, matching the route id: layout
@@ -69,6 +69,19 @@ export const splitRoutes = (routes, entries) => {
 };
 
 // Stryker disable all: build glue (log text, esbuild options), exercised by the adapt tests
+
+// The handler is bundled where it lives, so its own relative imports resolve;
+// only the adapter's files point into the build directory
+const adapterFiles = (dir) => ({
+	name: "adapter-middy",
+	setup(build) {
+		build.onResolve(
+			{ filter: /^\.\/sveltekit(Handler|Middleware)\.js$/ },
+			({ path }) => ({ path: join(dir, path) }),
+		);
+	},
+});
+
 const sveltekitAdapterMiddy = (opts = {}) => {
 	const { out = "build", handlerPath, esbuildOptions = {}, split = {} } = opts;
 	if (Object.hasOwn(split, "index")) {
@@ -102,7 +115,11 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 					handlerPath: config.handlerPath,
 				};
 			});
-			const routes = splitRoutes(builder.routes, entries);
+			// Like Kit's default, fully prerendered routes stay out of the server
+			const routes = splitRoutes(
+				builder.routes.filter((route) => route.prerender !== true),
+				entries,
+			);
 			for (const { name: entryName } of entries) {
 				if (routes[entryName].length === 0) {
 					builder.log.warn(
@@ -111,6 +128,27 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 				}
 			}
 			entries.push({ name: "index" });
+
+			// Instrumentation (eg OpenTelemetry) loads before the app, with
+			// the private env (`$app/env/private`) set. One bundle, so the app shares its env module.
+			const initializer =
+				builder.hasServerInstrumentationFile() &&
+				builder.createInstrumentationInitializer({
+					outputDirectory: tmp,
+					serverDirectory: tmp,
+				});
+			const instrumented = (entryHandler) => {
+				const entry = join(tmp, "instrumented.js");
+				writeFileSync(
+					entry,
+					[
+						`import ${JSON.stringify(initializer)};`,
+						`import ${JSON.stringify(join(tmp, "instrumentation.server.js"))};`,
+						`export const { handler } = await import(${JSON.stringify(entryHandler)});`,
+					].join("\n"),
+				);
+				return entry;
+			};
 
 			const resolveOptions = {
 				routesDir: builder.config.files.routes,
@@ -126,8 +164,6 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 						routes: routes[entry.name],
 						serverDirectory: tmp,
 					});
-					builder.copy(entryHandler, `${tmp}/handler.js`);
-
 					const result = await esbuild.build({
 						target: "node26",
 						bundle: true,
@@ -137,9 +173,12 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 						// Reported once, through the builder log, below
 						logLevel: "silent",
 						...esbuildOptions,
-						entryPoints: [`${tmp}/handler.js`],
+						entryPoints: [
+							initializer ? instrumented(entryHandler) : entryHandler,
+						],
 						outfile: `${out}/${entry.name}.mjs`,
 						external: ["node:*", ...(esbuildOptions?.external ?? [])],
+						plugins: [adapterFiles(tmp), ...(esbuildOptions?.plugins ?? [])],
 					});
 
 					const warnings = await esbuild.formatMessages(result.warnings, {
@@ -169,7 +208,11 @@ const sveltekitAdapterMiddy = (opts = {}) => {
 		},
 		supports: {
 			read: () => false,
+			instrumentation: () => true,
 		},
+		// `vite dev` and prerendering run outside Lambda; middleware values on
+		// `context` only exist there
+		emulate: () => ({ platform: () => ({ event: {}, context: {} }) }),
 	};
 };
 export default sveltekitAdapterMiddy;

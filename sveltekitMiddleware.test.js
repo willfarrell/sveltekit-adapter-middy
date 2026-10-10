@@ -1,4 +1,4 @@
-import { ok, strictEqual } from "node:assert";
+import { ok, rejects, strictEqual } from "node:assert";
 import { once } from "node:events";
 import { cpSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +18,7 @@ cpSync(
 );
 writeFileSync(
 	join(buildDir, "server.js"),
-	"export const server = { init(opts) { globalThis.__serverInitOpts = opts; return Promise.resolve(); } };",
+	"export const server = { init(opts) { globalThis.__serverInitOpts = opts; return globalThis.__serverInit?.() ?? Promise.resolve(); } };",
 );
 const sveltekitMiddleware = (
 	await import(pathToFileURL(join(buildDir, "sveltekitMiddleware.js")))
@@ -67,6 +67,23 @@ test("sveltekitMiddleware: encodes form action querystring slashes in html respo
 	);
 });
 
+// The rewrite adds 2 bytes per form action, so the length SvelteKit set from the
+// original body would make clients truncate the page
+test("sveltekitMiddleware: drops content-length from a rewritten html response", async () => {
+	const request = {
+		response: {
+			headers: { "content-type": "text/html", "content-length": "23" },
+			body: htmlBody('<form action="?/login">'),
+		},
+	};
+	await sveltekitMiddleware().after(request);
+	strictEqual(request.response.headers["content-length"], undefined);
+	strictEqual(
+		await readBody(request.response.body),
+		'<form action="?%2Flogin">',
+	);
+});
+
 test("sveltekitMiddleware: keeps multi-byte characters split across chunks", async () => {
 	const request = {
 		response: {
@@ -79,26 +96,42 @@ test("sveltekitMiddleware: keeps multi-byte characters split across chunks", asy
 	strictEqual(await readBody(request.response.body), "é");
 });
 
+test("sveltekitMiddleware: ends a cut-off multi-byte character with U+FFFD", async () => {
+	const request = {
+		response: {
+			headers: { "content-type": "text/html" },
+			body: Readable.from([Buffer.from("<p>"), Buffer.from([0xc3])]),
+		},
+	};
+	await sveltekitMiddleware().after(request);
+	strictEqual(await readBody(request.response.body), "<p>�");
+});
+
 test("sveltekitMiddleware: leaves non-html responses untouched", async () => {
 	const body = htmlBody('{"action":"?/login"}');
 	const request = {
 		response: {
-			headers: { "content-type": "application/json" },
+			headers: { "content-type": "application/json", "content-length": "20" },
 			body,
 		},
 	};
 	await sveltekitMiddleware().after(request);
 	strictEqual(request.response.body, body);
+	strictEqual(request.response.headers["content-length"], "20");
 	strictEqual(await readBody(request.response.body), '{"action":"?/login"}');
 });
 
 // HEAD, 204, or an endpoint returning `new Response(null)` with an html type
 test("sveltekitMiddleware: leaves an empty html body alone", async () => {
 	const request = {
-		response: { headers: { "content-type": "text/html" }, body: "" },
+		response: {
+			headers: { "content-type": "text/html", "content-length": "0" },
+			body: "",
+		},
 	};
 	await sveltekitMiddleware().after(request);
 	strictEqual(request.response.body, "");
+	strictEqual(request.response.headers["content-length"], "0");
 });
 
 test("sveltekitMiddleware: rewrites a form action split across chunks", async () => {
@@ -113,6 +146,31 @@ test("sveltekitMiddleware: rewrites a form action split across chunks", async ()
 		await readBody(request.response.body),
 		'<form action="?%2Flogin"></form>',
 	);
+});
+
+// Pins the chunk-boundary holdback, which relies on `formAction` holding one `a`
+test("sveltekitMiddleware: rewrites a form action at every chunk split", async () => {
+	const cases = [
+		['<form action="?/login">', '<form action="?%2Flogin">'],
+		// a near miss must pass through unchanged wherever it is cut
+		['<a href="x">action="?x</a>', '<a href="x">action="?x</a>'],
+	];
+	for (const [html, expected] of cases) {
+		for (let i = 1; i < html.length; i++) {
+			const request = {
+				response: {
+					headers: { "content-type": "text/html" },
+					body: Readable.from([html.slice(0, i), html.slice(i)]),
+				},
+			};
+			await sveltekitMiddleware().after(request);
+			strictEqual(
+				await readBody(request.response.body),
+				expected,
+				`split ${i}`,
+			);
+		}
+	}
 });
 
 // Streamed pages flush the shell before awaited data resolves; holding a chunk
@@ -130,8 +188,65 @@ test("sveltekitMiddleware: emits a chunk without waiting for the next", async ()
 			throw new Error("chunk held back");
 		}),
 	]);
-	ok(String(chunk).startsWith("<html><body>shell"));
+	strictEqual(String(chunk), "<html><body>shell</body>");
 	source.end();
+});
+
+// A rejected init would otherwise be awaited by every request the warm container serves
+test("sveltekitMiddleware: a failed init is retried on the next request", async () => {
+	let calls = 0;
+	// Rejects after a tick, once `before` is awaiting it, as a failing `init` hook would
+	globalThis.__serverInit = () =>
+		setTimeout(10).then(() => {
+			calls++;
+			if (calls === 1) throw new Error("init failed");
+		});
+	try {
+		const url = pathToFileURL(join(buildDir, "sveltekitMiddleware.js"));
+		url.search = "?init-retry"; // a fresh module instance, so a fresh init
+		const { default: middleware } = await import(url);
+		await rejects(middleware().before({ context: {} }), /init failed/);
+		await middleware().before({ context: {} });
+		strictEqual(calls, 2);
+	} finally {
+		delete globalThis.__serverInit;
+	}
+});
+
+// On Lambda init fails at cold start, before any event arrives; unhandled
+// until then, the rejection would take the process down instead
+test("sveltekitMiddleware: an init failing at cold start is retried by the first request", async () => {
+	let calls = 0;
+	globalThis.__serverInit = async () => {
+		calls++;
+		if (calls === 1) throw new Error("cold start failed");
+	};
+	const unhandled = [];
+	const onUnhandled = (reason) => unhandled.push(reason);
+	process.on("unhandledRejection", onUnhandled);
+	try {
+		const url = pathToFileURL(join(buildDir, "sveltekitMiddleware.js"));
+		url.search = "?cold-start-failure";
+		const { default: middleware } = await import(url);
+		await setTimeout(10); // the first event arrives later
+		await middleware().before({ context: {} });
+		strictEqual(calls, 2);
+		strictEqual(unhandled.length, 0);
+	} finally {
+		process.off("unhandledRejection", onUnhandled);
+		delete globalThis.__serverInit;
+	}
+});
+
+// Without it the rewritten body never ends and the lambda runs to its timeout
+test("sveltekitMiddleware: a render error ends the rewritten body", async () => {
+	const source = new PassThrough();
+	const request = {
+		response: { headers: { "content-type": "text/html" }, body: source },
+	};
+	await sveltekitMiddleware().after(request);
+	source.destroy(new Error("render failed"));
+	await rejects(readBody(request.response.body), /render failed/);
 });
 
 // Behind CloudFront the url origin would be the Function URL domain, so every

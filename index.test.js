@@ -6,10 +6,11 @@ import {
 	readFileSync,
 	writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import sveltekitAdapterMiddy, { resolveHandler, splitRoutes } from "./index.js";
 
 // `<tmp>/routes/admin/handler.js` and `<tmp>/routes/(app)/reports/handler.js`
@@ -25,25 +26,23 @@ const routesFixture = () => {
 
 test("adapter: returns object with name property", () => {
 	const adapter = sveltekitAdapterMiddy();
-	strictEqual(adapter.name, "@middy/sveltekit");
+	strictEqual(adapter.name, "sveltekit-adapter-middy");
 });
 
 // Assets live in S3/CloudFront and `server.init` gets no `read`, so claiming
 // support would only move the failure from build time to runtime
+// A CommonJS vite config loads the adapter with require(esm)
+test("adapter: resolves for require() as well as import", () => {
+	const require = createRequire(import.meta.url);
+	strictEqual(
+		require("sveltekit-adapter-middy").default,
+		sveltekitAdapterMiddy,
+	);
+});
+
 test("adapter: supports.read returns false", () => {
 	const adapter = sveltekitAdapterMiddy();
 	strictEqual(adapter.supports.read(), false);
-});
-
-test("adapter: has adapt method", () => {
-	const adapter = sveltekitAdapterMiddy();
-	ok(typeof adapter.adapt === "function");
-});
-
-test("adapter: accepts custom options", () => {
-	const adapter = sveltekitAdapterMiddy({ out: "custom-build" });
-	ok(adapter);
-	strictEqual(adapter.name, "@middy/sveltekit");
 });
 
 test("splitRoutes: splits by prefix, remainder to index", () => {
@@ -193,6 +192,7 @@ const kit3Builder = (overrides = {}) => {
 			);
 		},
 		copy: (from, to) => writeFileSync(to, readFileSync(from)),
+		hasServerInstrumentationFile: () => false,
 		generateManifest: () => {
 			throw new Error("generateManifest has been removed");
 		},
@@ -277,7 +277,31 @@ test("adapt: warns when a split entry matches no routes", async () => {
 		split: { admin: "/admin/" },
 	}).adapt(builder);
 	deepStrictEqual(warnings, [
-		"@middy/sveltekit: split entry admin matches no routes",
+		"sveltekit-adapter-middy: split entry admin matches no routes",
+	]);
+});
+
+// Kit leaves fully prerendered routes out of the server; `"auto"` ones stay
+test("adapt: prerendered routes are left out of every lambda", async () => {
+	const warnings = [];
+	const { builder, calls, out } = kit3Builder({
+		log: { minor: () => {}, warn: (message) => warnings.push(message) },
+		routes: [
+			{ id: "/", prerender: "auto" },
+			{ id: "/blog", prerender: true },
+		],
+	});
+	await sveltekitAdapterMiddy({
+		out,
+		esbuildOptions,
+		split: { blog: "/blog" },
+	}).adapt(builder);
+	deepStrictEqual(
+		calls.generateServerInstance.map(({ opts }) => opts.routes),
+		[[], [{ id: "/", prerender: "auto" }]],
+	);
+	deepStrictEqual(warnings, [
+		"sveltekit-adapter-middy: split entry blog matches no routes",
 	]);
 });
 
@@ -365,4 +389,117 @@ test("adapt: esbuild errors go to the builder log", async () => {
 	await rejects(sveltekitAdapterMiddy({ out, esbuildOptions }).adapt(builder));
 	strictEqual(errors.length, 1);
 	ok(errors[0].includes('Expected identifier but found "="'));
+});
+
+// The handler is bundled from where it lives, so its own relative imports
+// resolve, while `./sveltekitHandler.js` and `./sveltekitMiddleware.js` still
+// mean the adapter's copies
+test("adapt: a custom handler can import project code by relative path", async () => {
+	const { builder, out } = kit3Builder();
+	const src = mkdtempSync(join(tmpdir(), "adapter-middy-handler-"));
+	writeFileSync(join(src, "config.js"), 'export const name = "from-config";');
+	writeFileSync(
+		join(src, "handler.js"),
+		[
+			'import { name } from "./config.js";',
+			'import sveltekitHandler from "./sveltekitHandler.js";',
+			'import sveltekitMiddleware from "./sveltekitMiddleware.js";',
+			"export const handler = { name, sveltekitHandler, sveltekitMiddleware };",
+		].join("\n"),
+	);
+	await sveltekitAdapterMiddy({
+		out,
+		esbuildOptions,
+		handlerPath: join(src, "handler.js"),
+	}).adapt(builder);
+
+	const { handler } = await import(pathToFileURL(join(out, "index.mjs")));
+	strictEqual(handler.name, "from-config");
+	strictEqual(typeof handler.sveltekitHandler, "function");
+	strictEqual(typeof handler.sveltekitMiddleware, "function");
+});
+
+// Instrumentation (eg OpenTelemetry) must load before any app code, after the
+// private env is set, and in the same bundle so the app shares that env module
+test("adapt: server instrumentation loads after the env and before the app", async () => {
+	const { builder, out } = kit3Builder({
+		hasServerInstrumentationFile: () => true,
+		createInstrumentationInitializer: ({ outputDirectory }) => {
+			const initializer = join(outputDirectory, "env-init.js");
+			writeFileSync(initializer, 'globalThis.loadOrder = ["env"];');
+			return initializer;
+		},
+		writeServer: (dest) => {
+			mkdirSync(dest, { recursive: true });
+			writeFileSync(
+				join(dest, "instrumentation.server.js"),
+				'globalThis.loadOrder.push("instrumentation");',
+			);
+			writeFileSync(
+				join(dest, "index.js"),
+				'globalThis.loadOrder.push("app"); export const create_server = () => ({ init: async () => {} });',
+			);
+		},
+	});
+	// Only the app, not the built-in handler, which needs the `awslambda` global
+	const handlerPath = join(
+		mkdtempSync(join(tmpdir(), "adapter-middy-")),
+		"h.js",
+	);
+	writeFileSync(
+		handlerPath,
+		'export { default as handler } from "./sveltekitMiddleware.js";',
+	);
+	await sveltekitAdapterMiddy({ out, esbuildOptions, handlerPath }).adapt(
+		builder,
+	);
+
+	const { handler } = await import(pathToFileURL(join(out, "index.mjs")));
+	strictEqual(typeof handler, "function");
+	deepStrictEqual(globalThis.loadOrder, ["env", "instrumentation", "app"]);
+});
+
+test("adapter: supports server instrumentation", () => {
+	strictEqual(sveltekitAdapterMiddy().supports.instrumentation(), true);
+});
+
+// `vite dev` and prerendering run outside Lambda: without a stand-in,
+// `event.platform.context.x` throws there
+test("adapter: emulates an empty platform outside Lambda", async () => {
+	const platform = await sveltekitAdapterMiddy()
+		.emulate()
+		.platform({ config: {}, prerender: false });
+	deepStrictEqual(platform, { event: {}, context: {} });
+});
+
+test("adapt: esbuild errors are counted in the plural", async () => {
+	const { builder, out } = kit3Builder({
+		generateServerInstance: (dest) =>
+			writeFileSync(dest, 'import "./missing-a.js"; import "./missing-b.js";'),
+	});
+	await rejects(
+		sveltekitAdapterMiddy({ out, esbuildOptions }).adapt(builder),
+		/Bundling with esbuild failed with 2 errors$/,
+	);
+});
+
+// `{ prefix, handlerPath }` gives one lambda its own middleware stack
+test("adapt: a split entry given as an object uses its prefix and handlerPath", async () => {
+	const { builder, calls, out } = kit3Builder();
+	const handlerPath = join(
+		mkdtempSync(join(tmpdir(), "adapter-middy-")),
+		"admin.js",
+	);
+	writeFileSync(handlerPath, 'export const handler = "admin-handler";');
+	await sveltekitAdapterMiddy({
+		out,
+		esbuildOptions,
+		split: { admin: { prefix: "/admin", handlerPath } },
+	}).adapt(builder);
+
+	deepStrictEqual(calls.generateServerInstance[0].opts.routes, [
+		{ id: "/admin" },
+	]);
+	const { handler } = await import(pathToFileURL(join(out, "admin.mjs")));
+	strictEqual(handler, "admin-handler");
 });

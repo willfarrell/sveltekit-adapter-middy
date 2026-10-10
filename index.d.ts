@@ -17,15 +17,5 @@ export interface Options {
 	split?: Record<string, Prefix | SplitEntry>;
 }
 
-export function resolveHandler(
-	entry: { prefix?: Prefix; handlerPath?: string },
-	options: { routesDir: string; handlerPath?: string; builtin: string },
-): string;
-
-export function splitRoutes<R extends RouteDefinition>(
-	routes: R[],
-	entries: { name: string; prefix: Prefix }[],
-): Record<string, R[]>;
-
 declare function sveltekitAdapterMiddy(opts?: Options): Adapter;
 export default sveltekitAdapterMiddy;
