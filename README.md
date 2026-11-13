@@ -50,18 +50,18 @@ As of October 2026, the Lambda `nodejs26.x` runtime is in public preview, which 
 
 ```js
 // vite.config.js
-import { sveltekit } from '@sveltejs/kit/vite'
-import adapter from 'sveltekit-adapter-middy'
+import { sveltekit } from "@sveltejs/kit/vite";
+import adapter from "sveltekit-adapter-middy";
 
 export default {
-  plugins: [
-    sveltekit({
-      adapter: adapter({
-        // options
-      })
-    })
-  ]
-}
+	plugins: [
+		sveltekit({
+			adapter: adapter({
+				// options
+			}),
+		}),
+	],
+};
 ```
 
 ### Options
@@ -89,13 +89,13 @@ Build separate lambdas per route prefix, each with its own handler (and so its o
 
 ```js
 adapter({
-  split: {
-    // `/admin/*` -> build/admin.mjs, using the default handler
-    admin: '/admin',
-    // `/api/*` -> build/api.mjs, using a custom handler
-    api: { prefix: '/api', handlerPath: './lambda/api.js' }
-  }
-})
+	split: {
+		// `/admin/*` -> build/admin.mjs, using the default handler
+		admin: "/admin",
+		// `/api/*` -> build/api.mjs, using a custom handler
+		api: { prefix: "/api", handlerPath: "./lambda/api.js" },
+	},
+});
 ```
 
 Routes not matching any prefix go to `build/index.mjs`, as before. Static assets and prerendered pages are unaffected.
@@ -104,13 +104,13 @@ Prefixes match SvelteKit **route ids**, not request paths, so param segments are
 
 ```js
 adapter({
-  split: {
-    // src/routes/[[lang]]/admin/**
-    admin: '/[[lang]]/admin',
-    // anything a prefix can't express
-    api: (route) => /(^|\/)api(\/|$)/.test(route.id)
-  }
-})
+	split: {
+		// src/routes/[[lang]]/admin/**
+		admin: "/[[lang]]/admin",
+		// anything a prefix can't express
+		api: (route) => /(^|\/)api(\/|$)/.test(route.id),
+	},
+});
 ```
 
 When prefixes overlap, the longest string prefix wins, so `/admin/reports` beats `/admin` whatever the key order. Function prefixes are tried after every string prefix, in the order given. An entry that matches no routes logs a warning; it's usually a typo, such as a trailing `/`.
@@ -131,19 +131,19 @@ So once a route has a `split` entry, its middleware stack needs no more config. 
 
 ```js
 // src/routes/admin/handler.js — only this lambda loads these parameters
-import middy from '@middy/core'
-import { executionModeStreamifyResponse } from '@middy/core/StreamifyResponse'
-import ssm from '@middy/ssm'
-import sveltekitHandler from './sveltekitHandler.js'
-import sveltekitMiddleware from './sveltekitMiddleware.js'
+import middy from "@middy/core";
+import { executionModeStreamifyResponse } from "@middy/core/StreamifyResponse";
+import ssm from "@middy/ssm";
+import sveltekitHandler from "./sveltekitHandler.js";
+import sveltekitMiddleware from "./sveltekitMiddleware.js";
 
 export const handler = middy({ executionMode: executionModeStreamifyResponse })
-  .use([
-    // `event.platform.context.dbUrl` in hooks, `load` and actions
-    ssm({ fetchData: { dbUrl: '/app/admin/db-url' }, setToContext: true }),
-    sveltekitMiddleware()
-  ])
-  .handler(sveltekitHandler)
+	.use([
+		// `event.platform.context.dbUrl` in hooks, `load` and actions
+		ssm({ fetchData: { dbUrl: "/app/admin/db-url" }, setToContext: true }),
+		sveltekitMiddleware(),
+	])
+	.handler(sveltekitHandler);
 ```
 
 Notes:
